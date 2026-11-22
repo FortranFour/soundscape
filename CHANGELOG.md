@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.2.1
+
+- Fisheye map: a third radar background that keeps the house near true scale and compresses distance logarithmically toward the rim, over real imagery.
+- `aircraft` option: draw all nearby aircraft (as before), only those close enough to hear, or only those heard.
+- Setup asks for the aircraft search radius in miles where Home Assistant uses miles.
+- The map can be dragged and zoomed from the card, and the house can be put in the right place from the map (the blue pin).
+- Street map tiles load again. They were refused because the card withheld the page address that OpenStreetMap's servers require.
+- The editor shows the map reach and aircraft range in feet and miles where Home Assistant uses them, and lists every option's default. New cards get all options written out.
+- The title uses Home Assistant's standard card header, so it follows the theme like other cards.
+- On a zoomed-out map, a sound's icon stays by the house instead of sitting a fixed distance across the map.
+- The spectrogram's colour range adapts to each microphone's level instead of saturating on loud cameras.
+- A workflow checks the manifest, HACS requirements and the tests on every push and once a week.
+
 ## 0.2.0
 
 - Map mode for the radar: a street or satellite map behind it at true scale, alongside the schematic logarithmic view, which stays the default.

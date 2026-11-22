@@ -23,6 +23,8 @@ SHOTS = {
     "light": ({}, "light", "siren"),
     "dark": ({}, "dark", None),
     "map": ({"radar": "map", "map_style": "satellite", "map_radius_m": 60, "log_rows": 5}, "dark", None),
+    "fisheye": ({"radar": "fisheye", "map_style": "satellite", "range_mi": 6, "map_radius_ft": 200, "show_log": False, "show_spectrogram": False}, "dark", None),
+    "fisheye-heard": ({"radar": "fisheye", "aircraft": "heard", "show_log": False, "show_spectrogram": False}, "light", None),
     "map-wide": ({"radar": "map", "map_radius_m": 3000, "units": "km", "show_log": False, "show_spectrogram": False}, "light", None),
 }
 srv = subprocess.Popen([sys.executable, "-m", "http.server", "8765", "--bind", "127.0.0.1"], cwd="..",
@@ -39,14 +41,22 @@ try:
 
             def serve(route):
                 tiles.append(route.request.url)
-                route.fulfill(body=tile(sum(map(ord, route.request.url))), content_type="image/png")
+                route.fulfill(body=tile(sum(map(ord, route.request.url))), content_type="image/png",
+                              headers={"Access-Control-Allow-Origin": "*"})
             pg.route("**/tile.openstreetmap.org/**", serve)
             pg.route("**/server.arcgisonline.com/**", serve)
             pg.goto(f"http://127.0.0.1:8765/dev/harness.html?theme={theme}&config={quote(json.dumps(config))}" + (f"&open={opened}" if opened else ""))
             pg.wait_for_function("window.ready === true", timeout=15000)
-            pg.wait_for_timeout(700)
+            pg.wait_for_timeout(1800 if "fisheye" in name else 700)
             pg.screenshot(path=f"shot-{name}.png", full_page=True)
             print(name, "errors:", errs, "tiles:", len(tiles), tiles[:1])
+            if "fisheye" in name:
+                print("  ", pg.evaluate("""(() => { const cv = card.shadowRoot.querySelector('canvas.warp'), d = cv.getContext('2d').getImageData(0, 0, cv.width, cv.height).data;
+                    let lit = 0; for (let i = 0; i < d.length; i += 4) if (d[i + 3] && (d[i] !== 46 || d[i + 1] !== 46)) lit++;
+                    return {size: cv.width, covered: Math.round(lit / (Math.PI * cv.width * cv.width / 4) * 100) + '%',
+                            zooms: [...new Set([...card.shadowRoot.host.constructor ? [] : []])].length,
+                            planes: card.shadowRoot.querySelectorAll('.plot .ac').length, note: !card.shadowRoot.querySelector('.note').hidden}; })()"""),
+                      "zoom levels:", sorted({int(u.split("/tile/")[1].split("/")[0]) if "/tile/" in u else int(u.split("/")[3]) for u in tiles}))
             if name == "dark":
                 # scrolling list keeps its place across updates; filters; live audio controls
                 rows = pg.evaluate("card.shadowRoot.querySelectorAll('.log .row').length")
@@ -67,6 +77,37 @@ try:
                 pg.evaluate("card.shadowRoot.querySelector('.hear').click()")
                 print("rows", rows, "scroll kept", kept, "aircraft rows", air, "listen", state, "muted gain", muted,
                       "calls", pg.evaluate("window.calls"), "errors", errs)
+        # ---- map: zoom buttons, wheel, drag, and "the house is here"
+        pg = b.new_page(viewport={"width": 520, "height": 900})
+        errs = []
+        pg.on("pageerror", lambda e: errs.append(str(e)))
+        pg.route("**/tile.openstreetmap.org/**", lambda r: r.fulfill(body=tile(3), content_type="image/png"))
+        pg.goto("http://127.0.0.1:8765/dev/harness.html?theme=dark&config=" + quote(json.dumps({"radar": "map", "map_radius_ft": 200})))
+        pg.wait_for_function("window.ready === true", timeout=15000)
+        view = lambda: pg.evaluate("({r: Math.round(card._view.radius * 10) / 10, ox: Math.round(card._view.ox), oy: Math.round(card._view.oy), pin: !card.shadowRoot.querySelector('.sethome').hidden, ref: card.shadowRoot.querySelector('.tiles img').hasAttribute('referrerpolicy')})")  # noqa: E731
+        print("map start", view())
+        pg.evaluate("card.shadowRoot.querySelector('[data-zoom=\"1.6\"]').click()")
+        print("zoomed out", view())
+        box = pg.evaluate("(() => { const r = card.shadowRoot.querySelector('.radar').getBoundingClientRect(); return [r.x, r.y, r.width]; })()")
+        cx, cy = box[0] + box[2] / 2, box[1] + box[2] / 2
+        pg.mouse.move(cx, cy); pg.mouse.wheel(0, -200); pg.wait_for_timeout(200)
+        print("wheel in", view())
+        pg.mouse.move(cx, cy); pg.mouse.down(); pg.mouse.move(cx + 40, cy, steps=4); pg.mouse.move(cx + box[2] / 4, cy - box[2] / 8, steps=4); pg.mouse.up()
+        pg.wait_for_timeout(350)
+        v = view(); print("dragged", v, "(map moved right and up: the middle is now west and south of the house)")
+        pg.screenshot(path="shot-map-moved.png", full_page=True)
+        pg.evaluate("card.shadowRoot.querySelector('.sethome').click()"); pg.wait_for_timeout(100)
+        print("saved", [c for c in pg.evaluate("window.calls") if "set_home" in c])
+        pg.evaluate("window.feed({type: 'meta', meta: {...card._meta, lat: card._meta.lat - 0.0001}})")
+        print("after house moved", view())
+        pg.reload(); pg.wait_for_function("window.ready === true", timeout=15000)
+        print("after reload (zoom remembered)", view(), "errors", errs)
+        # ---- fisheye when no tile can be read
+        pg = b.new_page(viewport={"width": 520, "height": 700})
+        pg.route("**/tile.openstreetmap.org/**", lambda r: r.abort())
+        pg.goto("http://127.0.0.1:8765/dev/harness.html?theme=dark&config=" + quote(json.dumps({"radar": "fisheye"})))
+        pg.wait_for_function("window.ready === true", timeout=15000); pg.wait_for_timeout(1500)
+        print("tiles unreadable -> note:", pg.evaluate("card.shadowRoot.querySelector('.note').textContent.slice(0, 60)"))
         b.close()
 finally:
     srv.terminate()

@@ -24,8 +24,12 @@ def _frigate_url(hass) -> str:
     return ""
 
 
-def _sources_schema(d: dict) -> vol.Schema:
+MI = 1.609344
+
+
+def _sources_schema(d: dict, miles: bool) -> vol.Schema:
     text = sel.TextSelector()
+    reach = d.get(CONF_ADSB_RADIUS, 15)
     return vol.Schema({
         vol.Optional(CONF_FRIGATE_URL, description={"suggested_value": d.get(CONF_FRIGATE_URL, "")}): text,
         vol.Optional(CONF_BIRDNET_URL, description={"suggested_value": d.get(CONF_BIRDNET_URL, "")}): text,
@@ -33,8 +37,8 @@ def _sources_schema(d: dict) -> vol.Schema:
             sel.SelectSelectorConfig(options=[*ADSB_PROVIDERS, "custom", "off"],
                                      mode=sel.SelectSelectorMode.DROPDOWN, translation_key="adsb")),
         vol.Optional(CONF_ADSB_URL, description={"suggested_value": d.get(CONF_ADSB_URL, "")}): text,
-        vol.Required(CONF_ADSB_RADIUS, default=d.get(CONF_ADSB_RADIUS, 15)): sel.NumberSelector(
-            sel.NumberSelectorConfig(min=3, max=60, step=1, unit_of_measurement="km",
+        vol.Required(CONF_ADSB_RADIUS, default=round(reach / MI) if miles else round(reach)): sel.NumberSelector(
+            sel.NumberSelectorConfig(min=2, max=60, step=1, unit_of_measurement="mi" if miles else "km",
                                      mode=sel.NumberSelectorMode.BOX)),
         vol.Required(CONF_DISPATCH, default=d.get(CONF_DISPATCH, "auto")): sel.SelectSelector(
             sel.SelectSelectorConfig(mode=sel.SelectSelectorMode.DROPDOWN, options=[
@@ -102,9 +106,13 @@ class _Steps:
 
     async def _sources(self, step: str, user_input):
         errors = {}
+        # The form is drawn in the units in force before it is submitted, so convert with the same.
+        miles = use_imperial(self.hass, self._d.get(CONF_UNITS))
         if user_input is not None:
             self._d.update({k: "" for k in (CONF_FRIGATE_URL, CONF_BIRDNET_URL, CONF_ADSB_URL)})
             self._d.update(user_input)
+            if miles:
+                self._d[CONF_ADSB_RADIUS] = round(user_input[CONF_ADSB_RADIUS] * MI, 1)
             self._cams = {}
             if self._d.get(CONF_ADSB) == "custom" and not self._d.get(CONF_ADSB_URL):
                 errors[CONF_ADSB_URL] = "adsb_url"
@@ -115,7 +123,7 @@ class _Steps:
                     errors[CONF_FRIGATE_URL] = "cannot_connect"
             if not errors:
                 return await self.async_step_cameras()
-        return self.async_show_form(step_id=step, data_schema=_sources_schema(self._d), errors=errors)
+        return self.async_show_form(step_id=step, data_schema=_sources_schema(self._d, miles), errors=errors)
 
     async def async_step_cameras(self, user_input=None):
         errors = {}

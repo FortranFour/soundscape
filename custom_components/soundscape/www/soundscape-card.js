@@ -6,10 +6,11 @@
  *   type: custom:soundscape-card
  *   title: Soundscape
  *   show_radar: true
- *   radar: schematic          # or: map
+ *   radar: schematic          # or: map (true scale), fisheye (map with logarithmic distance)
+ *   aircraft: all             # or: audible (close enough to hear), heard (matched to a sound)
  *   map_style: streets        # or: satellite
- *   map_radius_m: 60          # how far the map reaches from the house
- *   range_km: 10              # outer ring of the schematic radar
+ *   map_radius_m: 60          # how far the map reaches to start with (or map_radius_ft: 200)
+ *   range_km: 10              # outer ring of the schematic radar (or range_mi: 6)
  *   radar_recent_seconds: 120 # keep ended sounds on the radar, faded, this long
  *   units: auto               # or: km, mi
  *   show_spectrogram: true
@@ -23,7 +24,7 @@
  *   log_max: 100              # rows kept in the list
  *   log_hide: []              # kinds to leave out, e.g. [vehicle, voice]
  */
-const VERSION = '0.2.0';
+const VERSION = '0.2.1';
 
 const GROUP = {
   bird: 'life', coyote: 'life', dog: 'life', cat: 'life', voice: 'life',
@@ -39,6 +40,13 @@ const KINDS = {
   tiltrotor: 'Ospreys', aircraft: 'Other aircraft',
 };
 
+const DEFAULTS = {
+  title: 'Soundscape', show_radar: true, radar: 'schematic', aircraft: 'all', map_style: 'streets', map_radius_m: 60,
+  range_km: 10, radar_recent_seconds: 120, units: 'auto', show_spectrogram: true, mic: 'auto',
+  spectrogram_height: 150, spectrogram_seconds: 60, show_listen: true, volume: 80,
+  show_log: true, log_rows: 8, log_max: 100, log_hide: [],
+};
+
 /* Aircraft seen from above, nose up, in a box about 14 units wide. [filled outline, stroked detail] */
 const PLANE = {
   jet: ['M0 -7 L1.3 -2.4 L7 3 L7 4.3 L1.3 2.4 L1 5.6 L3 6.9 L3 7.6 L-3 7.6 L-3 6.9 L-1 5.6 L-1.3 2.4 L-7 4.3 L-7 3 L-1.3 -2.4 Z', ''],
@@ -52,6 +60,8 @@ const TILES = {
   streets: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png', '© OpenStreetMap contributors', 19],
   satellite: ['https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', 'Imagery © Esri and its data providers', 19],
 };
+
+const TILE_CACHE = new Map();   // pixel data of tiles used by the fisheye view, shared by every card on the page
 
 /* Inferno-like ramp, as in BirdNET-Go's live spectrogram. */
 const LUT = (() => {
@@ -75,16 +85,30 @@ const compass = (b) => COMPASS[Math.round((((b % 360) + 360) % 360) / 45) % 8];
 const nice = (x) => { const p = 10 ** Math.floor(Math.log10(x)); const f = x / p; return (f >= 5 ? 5 : f >= 2 ? 2 : 1) * p; };
 
 class SoundscapeCard extends HTMLElement {
-  static getStubConfig() { return { title: 'Soundscape' }; }
+  /* A new card gets every option written out at its default, in the household's units. */
+  static getStubConfig(hass) {
+    const mi = (hass || document.querySelector('home-assistant')?.hass)?.config?.unit_system?.length === 'mi';
+    const { map_radius_m, range_km, ...rest } = DEFAULTS;
+    return { ...rest, ...(mi ? { map_radius_ft: 200, range_mi: 6 } : { map_radius_m, range_km }) };
+  }
 
   static getConfigForm() {
     const labels = {
       title: 'Title', show_radar: 'Radar', show_spectrogram: 'Live spectrogram', show_log: 'Recent sounds',
       show_listen: 'Listen button', radar: 'Radar background', map_style: 'Map', map_radius_m: 'Map reaches',
-      range_km: 'Schematic range for aircraft', radar_recent_seconds: 'Keep ended sounds on the radar',
+      map_radius_ft: 'Map reaches', range_km: 'Schematic range for aircraft', range_mi: 'Schematic range for aircraft',
+      radar_recent_seconds: 'Keep ended sounds on the radar', aircraft: 'Aircraft to draw',
       units: 'Distances', mic: 'Spectrogram microphone (auto, or a camera name)',
       spectrogram_height: 'Spectrogram height', spectrogram_seconds: 'Spectrogram span', volume: 'Starting volume',
       log_rows: 'Rows before the list scrolls', log_max: 'Rows kept', log_hide: 'Leave out of the list',
+    };
+    const mi = document.querySelector('home-assistant')?.hass?.config?.unit_system?.length === 'mi';
+    const defaults = {
+      title: 'Soundscape', radar: 'Schematic', aircraft: 'All nearby', map_style: 'Streets', map_radius_m: '60 m', map_radius_ft: '200 ft',
+      range_km: '10 km', range_mi: '6 mi', radar_recent_seconds: '120 s (0 turns it off)',
+      units: `Automatic (${mi ? 'miles and feet' : 'kilometres and metres'} here)`, mic: 'auto',
+      spectrogram_height: '150 px', spectrogram_seconds: '60 s', volume: '80 %', log_rows: '8', log_max: '100',
+      log_hide: 'nothing left out', show_radar: 'on', show_spectrogram: 'on', show_log: 'on', show_listen: 'on',
     };
     const num = (min, max, step, unit) => ({ number: { min, max, step, mode: 'box', ...(unit ? { unit_of_measurement: unit } : {}) } });
     const pick = (options) => ({ select: { mode: 'dropdown', options } });
@@ -97,10 +121,11 @@ class SoundscapeCard extends HTMLElement {
         ] },
         { type: 'expandable', name: '', title: 'Radar and map', schema: [
           { type: 'grid', name: '', schema: [
-            { name: 'radar', selector: pick([{ value: 'schematic', label: 'Schematic (logarithmic distance)' }, { value: 'map', label: 'Map (true scale)' }]) },
+            { name: 'radar', selector: pick([{ value: 'schematic', label: 'Schematic (logarithmic distance)' }, { value: 'map', label: 'Map (true scale)' }, { value: 'fisheye', label: 'Fisheye map (logarithmic distance)' }]) },
+            { name: 'aircraft', selector: pick([{ value: 'all', label: 'All nearby' }, { value: 'audible', label: 'Close enough to hear' }, { value: 'heard', label: 'Only those heard' }]) },
             { name: 'map_style', selector: pick([{ value: 'streets', label: 'Streets' }, { value: 'satellite', label: 'Satellite' }]) },
-            { name: 'map_radius_m', selector: num(20, 20000, 10, 'm') },
-            { name: 'range_km', selector: num(2, 50, 1, 'km') },
+            mi ? { name: 'map_radius_ft', selector: num(60, 60000, 10, 'ft') } : { name: 'map_radius_m', selector: num(20, 20000, 10, 'm') },
+            mi ? { name: 'range_mi', selector: num(1, 30, 1, 'mi') } : { name: 'range_km', selector: num(2, 50, 1, 'km') },
             { name: 'radar_recent_seconds', selector: num(0, 900, 10, 's') },
             { name: 'units', selector: pick([{ value: 'auto', label: 'Automatic' }, { value: 'km', label: 'Kilometres' }, { value: 'mi', label: 'Miles' }]) },
           ] },
@@ -121,16 +146,14 @@ class SoundscapeCard extends HTMLElement {
         ] },
       ],
       computeLabel: (s) => labels[s.name] || s.name,
+      computeHelper: (s) => (defaults[s.name] ? `Default: ${defaults[s.name]}` : undefined),
     };
   }
 
   setConfig(config) {
-    this._c = {
-      title: 'Soundscape', show_radar: true, radar: 'schematic', map_style: 'streets', map_radius_m: 60,
-      range_km: 10, radar_recent_seconds: 120, units: 'auto', show_spectrogram: true, mic: 'auto',
-      spectrogram_height: 150, spectrogram_seconds: 60, show_listen: true, volume: 80,
-      show_log: true, log_rows: 8, log_max: 100, log_hide: [], ...config,
-    };
+    this._c = { ...DEFAULTS, ...Object.fromEntries(Object.entries(config).filter(([, v]) => v !== null && v !== '')) };
+    if (this._c.range_mi != null) this._c.range_km = this._c.range_mi * 1.609344;
+    this._view = null;
     this._mic = this._c.mic && this._c.mic !== 'auto' ? this._c.mic : null;
     this._volume = Math.min(1, Math.max(0, (Number(this._c.volume) || 0) / 100));
     this._built = false;
@@ -174,6 +197,13 @@ class SoundscapeCard extends HTMLElement {
       this._error = null;
       this._built = false;
       this._render();
+    } else if (m.type === 'meta') {
+      this._meta = m.meta;
+      if (this._view) this._view.ox = this._view.oy = 0;
+      this._viewSave();
+      this._tiles();
+      if (this._c.radar === 'fisheye') this._fishRender();
+      this._render();
     } else if (m.type === 'state') {
       this._state = m;
       this._render();
@@ -190,7 +220,7 @@ class SoundscapeCard extends HTMLElement {
       canvas.width = w; canvas.height = this._meta.bands;
       const ctx = canvas.getContext('2d');
       ctx.fillStyle = '#000'; ctx.fillRect(0, 0, w, canvas.height);
-      this._specs[mic] = { canvas, ctx, t: 0 };
+      this._specs[mic] = { canvas, ctx, t: 0, raw: new Uint8Array(w * this._meta.bands), lo: 40, hi: 200, due: 0 };
     }
     return this._specs[mic];
   }
@@ -201,18 +231,42 @@ class SoundscapeCard extends HTMLElement {
     if (!n) return;
     const w = s.canvas.width;
     if (n > w) { bytes = bytes.subarray((n - w) * bands); n = w; }
-    const img = s.ctx.createImageData(n, bands);
-    for (let x = 0; x < n; x++) {
-      for (let b = 0; b < bands; b++) {
-        const v = bytes[x * bands + b] * 4, o = ((bands - 1 - b) * n + x) * 4;
-        img.data[o] = LUT[v]; img.data[o + 1] = LUT[v + 1]; img.data[o + 2] = LUT[v + 2]; img.data[o + 3] = 255;
-      }
-    }
+    s.raw.copyWithin(0, n * bands);
+    s.raw.set(bytes.subarray(0, n * bands), (w - n) * bands);
+    s.t = t;
+    s.due -= n;
+    if (s.due <= 0 && this._contrast(s)) return;      // range moved: everything was redrawn
     s.ctx.globalCompositeOperation = 'copy';
     s.ctx.drawImage(s.canvas, -n, 0);
     s.ctx.globalCompositeOperation = 'source-over';
-    s.ctx.putImageData(img, w - n, 0);
-    s.t = t;
+    this._draw(s, w - n, n);
+  }
+
+  _draw(s, x0, n) {
+    const bands = this._meta.bands, img = s.ctx.createImageData(n, bands), k = 255 / (s.hi - s.lo);
+    for (let x = 0; x < n; x++) {
+      const col = (x0 + x) * bands;
+      for (let b = 0; b < bands; b++) {
+        const v = Math.max(0, Math.min(255, Math.round((s.raw[col + b] - s.lo) * k))) * 4, o = ((bands - 1 - b) * n + x) * 4;
+        img.data[o] = LUT[v]; img.data[o + 1] = LUT[v + 1]; img.data[o + 2] = LUT[v + 2]; img.data[o + 3] = 255;
+      }
+    }
+    s.ctx.putImageData(img, x0, 0);
+  }
+
+  /* Cameras differ a great deal in level. Fit the colour range to the quiet and loud ends of the last 90 s. */
+  _contrast(s) {
+    s.due = Math.round(this._meta.cols_per_s * 5);
+    const hist = new Uint32Array(256);
+    let total = 0;
+    for (let i = 0; i < s.raw.length; i += 5) { const v = s.raw[i]; if (v) { hist[v]++; total++; } }
+    if (total < 500) return false;
+    const at = (q) => { let acc = 0; for (let v = 1; v < 256; v++) { acc += hist[v]; if (acc >= total * q) return v; } return 255; };
+    const lo = Math.max(0, at(0.08) - 6), hi = Math.min(255, Math.max(at(0.997) + 10, lo + 90));
+    if (Math.abs(lo - s.lo) < 8 && Math.abs(hi - s.hi) < 8) return false;
+    s.lo = lo; s.hi = hi;
+    this._draw(s, 0, s.canvas.width);
+    return true;
   }
 
   /* --------------------------------------------------------------- units */
@@ -225,14 +279,18 @@ class SoundscapeCard extends HTMLElement {
 
   /* -------------------------------------------------------------- render */
   _build() {
-    const c = this._c, map = c.radar === 'map';
+    const c = this._c, fish = c.radar === 'fisheye', map = c.radar === 'map' || fish;
     this.shadowRoot.innerHTML = `
       <style>${STYLE}</style>
       <ha-card>
-        <div class="head"><ha-icon icon="mdi:waveform"></ha-icon><span class="title"></span><span class="status"></span></div>
+        <div class="status${c.title ? '' : ' bare'}"></div>
+        <div class="body">
         <div class="now"></div>
         <div class="why" hidden></div>
-        ${c.show_radar ? `<div class="radar${map ? ' map' : ''}">${map ? '<div class="tiles"></div>' : ''}<div class="plot"></div>${map ? '<div class="credit"></div>' : ''}</div>` : ''}
+        ${c.show_radar ? `<div class="radar${map ? ' map' : ''}${fish ? ' fish' : ''}">${fish ? '<canvas class="warp"></canvas><div class="note" hidden></div>' : map ? '<div class="tiles"></div>' : ''}<div class="plot"></div>${map ? `<div class="credit"></div>
+          <div class="mapctl"><button data-zoom="0.625" title="Zoom in">+</button><button data-zoom="1.6" title="Zoom out">&minus;</button>
+            <button class="recenter" title="Back to the house and the starting zoom"><ha-icon icon="mdi:home-outline"></ha-icon></button>
+            <button class="sethome" title="The house is here: save the middle of the map as the house" hidden${fish ? ' style="display:none"' : ''}><ha-icon icon="mdi:map-marker-check-outline"></ha-icon></button></div>` : ''}</div>` : ''}
         ${c.show_spectrogram ? `<div class="spec">
           <div class="bar"><div class="pills"></div>
             ${c.show_listen ? `<div class="listen">
@@ -247,15 +305,23 @@ class SoundscapeCard extends HTMLElement {
           </div></div>` : ''}
         ${c.show_log ? `<div class="logwrap"><div class="filters"></div>
           <div class="log" style="max-height:${Math.max(1, Number(c.log_rows) || 8) * 28}px"></div></div>` : ''}
+        </div>
       </ha-card>`;
     const root = this.shadowRoot;
-    root.querySelector('.title').textContent = c.title || '';
+    root.querySelector('ha-card').header = c.title || undefined;   // the stock card header, so it follows the theme
     if (!this._wired) {
       this._wired = true;
       root.addEventListener('click', (e) => {
         const hit = (sel) => e.target.closest(sel);
         if (hit('.hear')) { this._listening ? this._listenStop() : this._listenStart(); return; }
         if (hit('.mute')) { this._muted = !this._muted; this._listenUi(); return; }
+        if (Date.now() - (this._dragged || 0) < 250) return;      // the end of a drag is not a click
+        const zoom = hit('[data-zoom]');
+        if (zoom && this._c.radar === 'fisheye') { this._fishZoom(Number(zoom.dataset.zoom)); return; }
+        if (zoom) { this._zoom(Number(zoom.dataset.zoom)); return; }
+        if (hit('.recenter') && this._c.radar === 'fisheye') { this._fish = null; try { localStorage.removeItem('soundscape-card-fisheye'); } catch (e) { /* private mode */ } this._fishZoom(1); return; }
+        if (hit('.recenter')) { this._view = { radius: this._radius0(), ox: 0, oy: 0 }; this._viewChanged(); return; }
+        if (hit('.sethome')) { this._setHome(); return; }
         const pill = hit('[data-mic]');
         if (pill) { this._mic = pill.dataset.mic || null; this._render(); return; }
         const filter = hit('[data-filter]');
@@ -267,12 +333,13 @@ class SoundscapeCard extends HTMLElement {
         if (e.target.classList?.contains('vol')) { this._volume = e.target.value / 100; this._muted = false; this._listenUi(); }
       });
     }
-    this._canvas = root.querySelector('canvas');
+    this._canvas = root.querySelector('.frame canvas');
     if (this._canvas) {
       this._ro = this._ro || new ResizeObserver(() => this._paint());
       this._ro.observe(this._canvas);
     }
-    if (map) this._tiles();
+    if (fish) this._fishSetup(root.querySelector('.radar'));
+    else if (map) { this._tiles(); this._mapGestures(root.querySelector('.radar')); }
     this._sig = {};
     this._built = true;
     this._listenUi();
@@ -311,7 +378,7 @@ class SoundscapeCard extends HTMLElement {
       this._set('.why', `<b>${esc(open.label)}</b> · ${Math.round(open.conf * 100)}% · ${clock(open.start)}<ul>${lines.join('')}${disp.join('')}</ul>${this._levels(open)}`);
     }
 
-    if (this._c.show_radar) this._set('.plot', this._c.radar === 'map' ? this._mapPlot(st) : this._radar(st));
+    if (this._c.show_radar) this._set('.plot', this._c.radar === 'map' ? this._mapPlot(st) : this._c.radar === 'fisheye' ? this._fishPlot(st) : this._radar(st));
     if (this._c.show_spectrogram) this._specUi(st);
     if (this._c.show_log) this._log(st);
   }
@@ -434,6 +501,12 @@ class SoundscapeCard extends HTMLElement {
 
   _hot(st) { return new Set(st.active.filter((e) => e.method === 'adsb').map((e) => e.extra?.aircraft?.hex)); }
 
+  /* all nearby, only those close enough to hear, or only those matched to a sound */
+  _planes(st, hot) {
+    const mode = this._c.aircraft;
+    return st.aircraft.filter((a) => hot.has(a.hex) || mode === 'all' || !mode || (mode === 'audible' && a.audible >= 0.25));
+  }
+
   /* ---------------------------------------------- schematic radar (log) */
   _radar(st) {
     const R_MICS = 26, R_NEAR = 44, R_IN = 58, R_OUT = 98, mi = this._mi;
@@ -457,7 +530,7 @@ class SoundscapeCard extends HTMLElement {
       return [...polar(m.bearing, r), ...polar(m.bearing, r + 6)];
     });
     const hot = this._hot(st);
-    for (const a of st.aircraft) {
+    for (const a of this._planes(st, hot)) {
       if (a.km > range * 1.15) continue;
       const on = hot.has(a.hex);
       const [x, y] = polar(on ? a.heard_bearing : a.bearing, km(on ? a.heard_km : a.km));
@@ -467,49 +540,295 @@ class SoundscapeCard extends HTMLElement {
   }
 
   /* -------------------------------------------------- map radar (linear) */
+  _radius0() {
+    const c = this._c;
+    return Math.max(15, c.map_radius_ft != null ? c.map_radius_ft * 0.3048 : Number(c.map_radius_m) || 60);
+  }
+
+  /* What the map shows: how far it reaches, and how far its middle is from the house (metres east, north).
+     Zooming and dragging are remembered in this browser until the card's own setting is changed. */
+  _viewGet() {
+    if (!this._view) {
+      let saved = {};
+      try { saved = JSON.parse(localStorage.getItem('soundscape-card-view') || '{}'); } catch (e) { /* private mode */ }
+      const fresh = saved.from === this._radius0() && saved.radius > 0;
+      this._view = { radius: fresh ? saved.radius : this._radius0(), ox: fresh ? saved.ox || 0 : 0, oy: fresh ? saved.oy || 0 : 0 };
+    }
+    return this._view;
+  }
+
+  _viewSave() {
+    try { localStorage.setItem('soundscape-card-view', JSON.stringify({ ...this._viewGet(), from: this._radius0() })); } catch (e) { /* private mode */ }
+  }
+
+  _viewChanged() {
+    const v = this._viewGet();
+    v.radius = Math.min(40000, Math.max(15, v.radius));
+    this._viewSave();
+    this._tiles();
+    delete this._sig['.plot'];
+    if (this._state) this._render();
+  }
+
+  _zoom(factor) { this._viewGet().radius *= factor; this._viewChanged(); }
+
+  async _setHome() {
+    const v = this._viewGet(), m = this._meta;
+    const lat = m.lat + v.oy / 111320, lon = m.lon + v.ox / (111320 * Math.cos(m.lat * Math.PI / 180));
+    try {
+      await this._hass.callWS({ type: 'soundscape/set_home', lat, lon });
+    } catch (err) {
+      const b = this.shadowRoot.querySelector('.sethome');
+      if (b) b.title = `Could not save: ${err?.message || err}`;
+    }
+  }
+
+  _mapGestures(el) {
+    const pts = new Map();
+    let start = null, moved = false;
+    const layers = () => [el.querySelector('.tiles'), el.querySelector('.plot')];
+    const shift = (dx, dy, scale) => { for (const l of layers()) l.style.transform = dx || dy || scale !== 1 ? `translate(${dx}px, ${dy}px) scale(${scale})` : ''; };
+    const spread = () => { const [a, b] = [...pts.values()]; return Math.hypot(a.x - b.x, a.y - b.y); };
+    el.addEventListener('pointerdown', (e) => {
+      if (e.target.closest('.mapctl')) return;
+      pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      start = { x: e.clientX, y: e.clientY, spread: pts.size === 2 ? spread() : 0 };
+      moved = false;
+    });
+    el.addEventListener('pointermove', (e) => {
+      if (!pts.has(e.pointerId) || !start) return;
+      pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (pts.size === 2 && start.spread) { moved = true; shift(0, 0, spread() / start.spread); return; }
+      const dx = e.clientX - start.x, dy = e.clientY - start.y;
+      if (!moved && Math.hypot(dx, dy) < 5) return;
+      if (!moved) { moved = true; el.setPointerCapture?.(e.pointerId); }
+      shift(dx, dy, 1);
+    });
+    const end = (e) => {
+      if (!pts.has(e.pointerId)) return;
+      const v = this._viewGet(), perPx = 2 * v.radius / el.clientWidth;
+      if (moved && pts.size === 2 && start?.spread) v.radius /= spread() / start.spread;
+      else if (moved && start) { v.ox -= (e.clientX - start.x) * perPx; v.oy += (e.clientY - start.y) * perPx; }
+      pts.delete(e.pointerId);
+      if (moved) { this._dragged = Date.now(); shift(0, 0, 1); this._viewChanged(); }
+      start = null; moved = false;
+    };
+    el.addEventListener('pointerup', end);
+    el.addEventListener('pointercancel', end);
+    el.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      this._viewGet().radius *= e.deltaY > 0 ? 1.25 : 0.8;
+      clearTimeout(this._wheel);
+      this._wheel = setTimeout(() => this._viewChanged(), 60);
+    }, { passive: false });
+  }
+
   _tiles() {
-    const el = this.shadowRoot.querySelector('.tiles'), m = this._meta;
+    const el = this.shadowRoot?.querySelector('.tiles'), m = this._meta;
     if (!el || !m || m.lat == null) return;
-    const c = this._c, radius = Math.max(20, Number(c.map_radius_m) || 60);
+    const c = this._c, v = this._viewGet(), radius = v.radius;
     const [url, credit, maxZoom] = c.map_tiles ? [c.map_tiles, c.map_attribution || '', c.map_max_zoom || 19] : (TILES[c.map_style] || TILES.streets);
     const cosLat = Math.cos(m.lat * Math.PI / 180);
+    const lat = m.lat + v.oy / 111320, lon = m.lon + v.ox / (111320 * cosLat);
     const z = Math.max(1, Math.min(maxZoom, Math.floor(Math.log2(3.4 * 256 * 156543.03392 * cosLat / (2 * radius)))));
     const n = 2 ** z, span = (2 * radius) / (156543.03392 * cosLat / n) / 256;
-    const cx = (m.lon + 180) / 360 * n;
-    const cy = (1 - Math.asinh(Math.tan(m.lat * Math.PI / 180)) / Math.PI) / 2 * n;
+    const cx = (lon + 180) / 360 * n;
+    const cy = (1 - Math.asinh(Math.tan(lat * Math.PI / 180)) / Math.PI) / 2 * n;
     const x0 = cx - span / 2, y0 = cy - span / 2;
     let out = '';
     for (let ty = Math.floor(y0); ty <= Math.floor(y0 + span); ty++) {
       for (let tx = Math.floor(x0); tx <= Math.floor(x0 + span); tx++) {
         const src = url.replace('{z}', z).replace('{x}', ((tx % n) + n) % n).replace('{y}', ty);
-        out += `<img alt="" loading="lazy" referrerpolicy="no-referrer" src="${esc(src)}" style="left:${((tx - x0) / span * 100).toFixed(3)}%;top:${((ty - y0) / span * 100).toFixed(3)}%;width:${(100 / span + 0.05).toFixed(3)}%">`;
+        out += `<img alt="" draggable="false" src="${esc(src)}" style="left:${((tx - x0) / span * 100).toFixed(3)}%;top:${((ty - y0) / span * 100).toFixed(3)}%;width:${(100 / span + 0.05).toFixed(3)}%">`;
       }
     }
-    el.innerHTML = out;
+    if (this._tileSig !== out) { this._tileSig = out; el.innerHTML = out; }
     this.shadowRoot.querySelector('.credit').textContent = credit;
+    const moved = Math.hypot(v.ox, v.oy) > 1.5;
+    const pin = this.shadowRoot.querySelector('.sethome');
+    if (pin) pin.hidden = !(moved && this._hass?.user?.is_admin !== false);
   }
 
   _mapPlot(st) {
-    const R = 100, radius = Math.max(20, Number(this._c.map_radius_m) || 60), k = R / radius;
+    const v = this._viewGet(), radius = v.radius, k = 100 / radius;
+    const hx = -v.ox * k, hy = v.oy * k;                      // where the house sits in the view
+    const far = Math.max(1, ...st.mics.map((m) => m.distance));
+    const rIcon = Math.min(62, Math.max(20, (far + 12) * k)); // just outside the microphones, at true scale when zoomed in
     let s = `<svg viewBox="-100 -100 200 200" role="img" aria-label="Where sounds are coming from, on a map">`;
-    s += this._sounds(st, 150, 62);
+    s += `<g transform="translate(${hx.toFixed(1)} ${hy.toFixed(1)})">`;
+    s += this._sounds(st, rIcon + 16, rIcon);
     s += `<circle class="home" r="2.4"/>`;
-    s += this._mics(st, (m) => {
-      const r = Math.min(92, m.distance * k);
-      return [...polar(m.bearing, r), ...polar(m.bearing, r + 6)];
-    });
+    s += this._mics(st, (m) => [...polar(m.bearing, m.distance * k), ...polar(m.bearing, m.distance * k + 6)]);
+    s += '</g>';
+    if (Math.hypot(hx, hy) > 2) s += '<path class="cross" d="M-5 0 H5 M0 -5 V5"/>';
     const hot = this._hot(st);
-    for (const a of st.aircraft) {
+    for (const a of this._planes(st, hot)) {
       const on = hot.has(a.hex), d = (on ? a.heard_km : a.km) * 1000 * k, b = on ? a.heard_bearing : a.bearing;
-      if (d > 135 && !on && a.audible < 0.25) continue;      // off the map and not audible: leave it out
-      const edge = d > 90;
-      const [x, y] = polar(b, edge ? 88 : d);
+      let [x, y] = polar(b, d);
+      x += hx; y += hy;
+      const out = Math.max(Math.abs(x), Math.abs(y));
+      if (out > 140 && !on && a.audible < 0.25) continue;     // off the map and not audible: leave it out
+      const edge = out > 90;
+      if (edge) { x *= 88 / out; y *= 88 / out; }
       s += this._plane(a, x, y, on, edge ? 'far' : true);
     }
     /* scale bar */
     const bar = this._mi ? nice(radius * 0.5 * 3.28084) : nice(radius * 0.5);
     const len = (this._mi ? bar / 3.28084 : bar) * k;
     s += `<g class="scale" transform="translate(-94 92)"><path d="M0 -3 V0 H${len.toFixed(1)} V-3"/><text x="${(len / 2).toFixed(1)}" y="-3">${bar >= 5280 && this._mi ? +(bar / 5280).toFixed(1) + ' mi' : bar >= 1000 && !this._mi ? bar / 1000 + ' km' : bar + (this._mi ? ' ft' : ' m')}</text></g>`;
+    s += `<g class="north" transform="translate(90 -86)"><path d="M0 -8 L4 4 L0 1.5 L-4 4 Z"/><text y="12">N</text></g>`;
+    return s + '</svg>';
+  }
+
+  /* ------------------------------------------- fisheye map (logarithmic) */
+  /* Distance d metres from the house is drawn at a fraction u of the radius, d = c (e^(k u) - 1):
+     close to true scale in the middle, logarithmic further out. Bearings are never bent.
+     The configured map reach lands at 30 % of the radius and the aircraft range at the rim. */
+  _fishGet() {
+    if (!this._fish) {
+      const base = Math.max(500, this._c.range_km * 1000);
+      let saved = {};
+      try { saved = JSON.parse(localStorage.getItem('soundscape-card-fisheye') || '{}'); } catch (e) { /* private mode */ }
+      const range = saved.from === base && saved.range > 0 ? saved.range : base;
+      const inner = Math.min(this._radius0(), range / 5);
+      let lo = 0.01, hi = 40;
+      for (let i = 0; i < 60; i++) {
+        const k = (lo + hi) / 2;
+        if ((Math.exp(k) - 1) / (Math.exp(0.3 * k) - 1) < range / inner) lo = k; else hi = k;
+      }
+      const k = (lo + hi) / 2;
+      this._fish = { range, base, k, c: range / (Math.exp(k) - 1) };
+    }
+    return this._fish;
+  }
+
+  _fishU(metres) { const f = this._fishGet(); return Math.min(1.2, Math.log(Math.max(0, metres) / f.c + 1) / f.k); }
+
+  _fishZoom(factor) {
+    const f = this._fishGet(), range = Math.min(80000, Math.max(300, f.range * factor));
+    try { localStorage.setItem('soundscape-card-fisheye', JSON.stringify({ range, from: f.base })); } catch (e) { /* private mode */ }
+    this._fish = null;
+    delete this._sig['.plot'];
+    if (this._state) this._render();
+    clearTimeout(this._fishTimer);
+    this._fishTimer = setTimeout(() => this._fishRender(), 150);
+  }
+
+  _fishSetup(el) {
+    this._fishRo = this._fishRo || new ResizeObserver(() => { clearTimeout(this._fishTimer); this._fishTimer = setTimeout(() => this._fishRender(), 200); });
+    this._fishRo.observe(el);
+    el.addEventListener('wheel', (e) => { e.preventDefault(); this._fishZoom(e.deltaY > 0 ? 1.25 : 0.8); }, { passive: false });
+  }
+
+  _tile(z, x, y, url) {
+    const key = `${url}|${z}/${x}/${y}`;
+    if (!TILE_CACHE.has(key)) {
+      TILE_CACHE.set(key, new Promise((resolve) => {
+        const img = new Image();
+        img.crossOrigin = 'anonymous';           // needed to read the pixels back
+        img.onload = () => {
+          try {
+            const cv = document.createElement('canvas');
+            cv.width = cv.height = 256;
+            const ctx = cv.getContext('2d', { willReadFrequently: true });
+            ctx.drawImage(img, 0, 0, 256, 256);
+            resolve(ctx.getImageData(0, 0, 256, 256).data);
+          } catch (e) { resolve(null); }
+        };
+        img.onerror = () => resolve(null);
+        img.src = url.replace('{z}', z).replace('{x}', x).replace('{y}', y);
+      }));
+      if (TILE_CACHE.size > 160) TILE_CACHE.delete(TILE_CACHE.keys().next().value);
+    }
+    return TILE_CACHE.get(key);
+  }
+
+  async _fishRender() {
+    const cv = this.shadowRoot?.querySelector('canvas.warp'), m = this._meta;
+    if (!cv || !m || m.lat == null || !cv.clientWidth) return;
+    const run = this._fishRun = (this._fishRun || 0) + 1;
+    const c = this._c, f = this._fishGet();
+    const [url, credit, maxZoom] = c.map_tiles ? [c.map_tiles, c.map_attribution || '', c.map_max_zoom || 19] : (TILES[c.map_style] || TILES.streets);
+    this.shadowRoot.querySelector('.credit').textContent = credit;
+    const S = Math.min(760, Math.round(cv.clientWidth * Math.min(2, window.devicePixelRatio || 1))), half = S / 2;
+    const cosLat = Math.cos(m.lat * Math.PI / 180), M0 = 156543.03392 * cosLat;
+    const STEPS = 512, zoomAt = new Uint8Array(STEPS + 1), distAt = new Float64Array(STEPS + 1);
+    for (let i = 0; i <= STEPS; i++) {
+      const u = i / STEPS;
+      distAt[i] = f.c * (Math.exp(f.k * u) - 1);
+      const perPixel = f.c * f.k * Math.exp(f.k * u) / half;          // metres per canvas pixel, along the radius
+      zoomAt[i] = Math.max(2, Math.min(maxZoom, Math.ceil(Math.log2(M0 / perPixel))));
+    }
+    const world = (east, north, z) => {
+      const lat = m.lat + north / 111320, lon = m.lon + east / (111320 * cosLat), n = 2 ** z * 256;
+      return [(lon + 180) / 360 * n, (0.5 - Math.log(Math.tan(Math.PI / 4 + lat * Math.PI / 360)) / (2 * Math.PI)) * n, n / 256];
+    };
+    /* which tiles: walk rays out from the house */
+    const need = new Map();
+    for (let i = 0; i <= STEPS; i += 4) {
+      for (let a = 0; a < 360; a += 4) {
+        const d = distAt[i], z = zoomAt[i];
+        const [X, Y, n] = world(d * Math.sin(a * Math.PI / 180), d * Math.cos(a * Math.PI / 180), z);
+        const tx = ((Math.floor(X / 256) % n) + n) % n, ty = Math.floor(Y / 256);
+        if (ty >= 0 && ty < n) need.set(`${z}/${tx}/${ty}`, [z, tx, ty]);
+      }
+    }
+    const keys = [...need.keys()];
+    const loaded = await Promise.all([...need.values()].map(([z, x, y]) => this._tile(z, x, y, url)));
+    if (run !== this._fishRun) return;                                  // a newer render has started
+    const tiles = new Map(keys.map((key, i) => [key, loaded[i]]));
+    const note = this.shadowRoot.querySelector('.note');
+    const got = loaded.filter(Boolean).length;
+    note.hidden = got > 0;
+    if (!got) { note.textContent = 'This map source does not let its tiles be redrawn, so the fisheye view cannot use it. Try the other map style, or the true-scale map.'; return; }
+    cv.width = cv.height = S;
+    const ctx = cv.getContext('2d'), img = ctx.createImageData(S, S), out = img.data;
+    for (let py = 0; py < S; py++) {
+      const dy = py + 0.5 - half;
+      for (let px = 0; px < S; px++) {
+        const dx = px + 0.5 - half, r = Math.hypot(dx, dy) / half;
+        if (r > 1) continue;
+        const i = Math.min(STEPS, Math.round(r * STEPS)), z = zoomAt[i], d = distAt[i] / (r * half || 1);
+        const [X, Y, n] = world(dx * d, -dy * d, z);
+        const tx = ((Math.floor(X / 256) % n) + n) % n, ty = Math.floor(Y / 256);
+        const data = tiles.get(`${z}/${tx}/${ty}`);
+        const o = (py * S + px) * 4;
+        if (!data) { out[o] = out[o + 1] = out[o + 2] = 46; out[o + 3] = 255; continue; }
+        const t = ((Math.floor(Y) & 255) * 256 + (Math.floor(X) & 255)) * 4;
+        out[o] = data[t] * 0.8; out[o + 1] = data[t + 1] * 0.8; out[o + 2] = data[t + 2] * 0.8; out[o + 3] = 255;
+      }
+    }
+    ctx.putImageData(img, 0, 0);
+  }
+
+  _fishPlot(st) {
+    const R = 98, f = this._fishGet(), mi = this._mi, r = (metres) => R * this._fishU(metres);
+    if (this._fishDrawn !== `${f.range}|${this._meta.lat}|${this._meta.lon}|${this._c.map_style}`) {
+      this._fishDrawn = `${f.range}|${this._meta.lat}|${this._meta.lon}|${this._c.map_style}`;
+      this._fishRender();
+    }
+    let s = `<svg viewBox="-100 -100 200 200" role="img" aria-label="Where sounds are coming from, on a fisheye map">`;
+    s += `<circle class="rim" r="${R}"/>`;
+    const marks = mi ? [[60.96, '200 ft'], [402.3, '¼ mi'], [1609.3, '1 mi'], [4828, '3 mi'], [16093, '10 mi'], [48280, '30 mi']]
+      : [[50, '50 m'], [250, '250 m'], [1000, '1 km'], [3000, '3 km'], [10000, '10 km'], [30000, '30 km']];
+    for (const [d, label] of marks) {
+      const u = this._fishU(d);
+      if (u < 0.14 || u > 0.93) continue;
+      s += `<circle class="ring" r="${(R * u).toFixed(1)}"/><text class="rl" x="2" y="${(-R * u + 6).toFixed(1)}">${label}</text>`;
+    }
+    s += `<text class="rl" x="2" y="${-R + 6}">${this._dist(f.range / 1000)}</text>`;
+    const far = Math.max(1, ...st.mics.map((m) => m.distance));
+    const rIcon = Math.min(60, Math.max(22, r(far + 15)));
+    s += this._sounds(st, rIcon + 16, rIcon);
+    s += `<circle class="home" r="2.4"/>`;
+    s += this._mics(st, (m) => [...polar(m.bearing, r(m.distance)), ...polar(m.bearing, r(m.distance) + 6)]);
+    const hot = this._hot(st);
+    for (const a of this._planes(st, hot)) {
+      const on = hot.has(a.hex), u = this._fishU((on ? a.heard_km : a.km) * 1000);
+      if (u > 1.08 && !on && a.audible < 0.25) continue;
+      const [x, y] = polar(on ? a.heard_bearing : a.bearing, R * Math.min(u, 0.93));
+      s += this._plane(a, x, y, on, u > 0.93 ? 'far' : on || a.audible >= 0.25);
+    }
     s += `<g class="north" transform="translate(90 -86)"><path d="M0 -8 L4 4 L0 1.5 L-4 4 Z"/><text y="12">N</text></g>`;
     return s + '</svg>';
   }
@@ -622,11 +941,10 @@ class SoundscapeCard extends HTMLElement {
 
 const STYLE = `
   :host { --life: #43a047; --road: #78909c; --alert: #e53935; --air: #1e88e5; }
-  ha-card { padding: 12px 14px 14px; overflow: hidden; }
-  .head { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
-  .head ha-icon { color: var(--secondary-text-color); --mdc-icon-size: 20px; }
-  .title { font-size: 16px; font-weight: 500; flex: 1; color: var(--primary-text-color); }
-  .status { font-size: 12px; color: var(--secondary-text-color); }
+  ha-card { overflow: hidden; position: relative; }
+  .body { padding: 0 16px 16px; }
+  .status { position: absolute; top: 12px; right: 16px; line-height: var(--ha-line-height-expanded, 48px); font-size: 12px; color: var(--secondary-text-color); }
+  .status.bare { position: static; text-align: right; line-height: 28px; padding: 4px 16px 0; }
   .status.bad { color: var(--warning-color, #f9a825); }
   .empty, .none, .quiet { color: var(--secondary-text-color); font-size: 14px; padding: 6px 0; }
   .quiet { padding: 9px 0; }
@@ -676,7 +994,21 @@ const STYLE = `
   .pulse { fill: none; stroke: var(--air); stroke-width: 1; animation: breathe 1.6s ease-in-out infinite; }
   @keyframes breathe { 0%, 100% { opacity: .15; } 50% { opacity: .6; } }
 
-  .radar.map { aspect-ratio: 1; border-radius: 12px; overflow: hidden; background: #2a2d31; }
+  .radar.map { aspect-ratio: 1; border-radius: 12px; overflow: hidden; background: #2a2d31; touch-action: none; cursor: grab; user-select: none; }
+  .radar.map .tiles, .radar.map .plot { transform-origin: 50% 50%; }
+  .mapctl { position: absolute; left: 8px; top: 8px; display: flex; flex-direction: column; gap: 4px; }
+  .mapctl button { all: unset; cursor: pointer; width: 28px; height: 28px; display: grid; place-items: center; border-radius: 8px;
+    background: rgba(255,255,255,.88); color: #222; font: 500 18px/1 sans-serif; box-shadow: 0 1px 3px rgba(0,0,0,.4); --mdc-icon-size: 18px; }
+  .mapctl button[hidden] { display: none; }
+  .mapctl .sethome { background: #1e88e5; color: #fff; }
+  .cross { stroke: #fff; stroke-width: .8; fill: none; filter: drop-shadow(0 0 1px #000); }
+  .radar.fish { background: none; border-radius: 0; overflow: visible; touch-action: auto; cursor: default; }
+  .radar.fish canvas.warp { position: absolute; inset: 1%; width: 98%; height: 98%; border-radius: 50%; background: #2a2d31; }
+  .radar.fish .ring { stroke: rgba(255,255,255,.5); stroke-width: .5; }
+  .radar.fish .rim { fill: none; stroke: var(--divider-color); stroke-width: .8; }
+  .radar.fish .credit { border-radius: 6px; right: 4px; bottom: 4px; }
+  .note { position: absolute; inset: 30% 12%; display: grid; place-items: center; text-align: center; font-size: 13px; color: #fff; }
+  .note[hidden] { display: none; }
   .radar.map .tiles, .radar.map .plot { position: absolute; inset: 0; }
   .tiles img { position: absolute; display: block; height: auto; max-width: none; user-select: none; pointer-events: none; }
   .radar.map .tiles::after { content: ""; position: absolute; inset: 0; background: rgba(12,14,18,.28); }

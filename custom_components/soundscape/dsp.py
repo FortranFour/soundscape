@@ -30,7 +30,7 @@ HOP = 256
 HOPS_PER_COL = 8
 N_BANDS = 96
 F_LO = 60.0
-DB_MIN, DB_MAX = -105.0, -35.0
+DB_MIN, DB_MAX = -110.0, -10.0  # wide on purpose: the card stretches contrast per microphone
 
 BANDS = {
     "sub": (40, 150),

@@ -102,10 +102,15 @@ class Hub:
         self._dispatch: Dispatch | None = None
         self._air_hint = 0.0
         self.status: dict[str, str] = {}
+        # Where the house is. Home Assistant's own location unless corrected from the card's map.
+        self.lat, self.lon = hass.config.latitude, hass.config.longitude
+        self._home_store = Store(hass, 1, f"{DOMAIN}_home")
 
     # ------------------------------------------------------------ lifecycle
     async def async_start(self) -> None:
         hass, opt = self.hass, self.opt
+        if (home := await self._home_store.async_load()) and "lat" in home:
+            self.lat, self.lon = home["lat"], home["lon"]
         overrides = parse_overrides(opt.get(CONF_OVERRIDES, ""))
         frigate_url = (opt.get(CONF_FRIGATE_URL) or "").rstrip("/")
         frigate_host = urlsplit(frigate_url).hostname or ""
@@ -128,7 +133,7 @@ class Hub:
             urls[name] = overrides.get(name) or template.format(host=frigate_host, camera=path)
 
         sun = lambda: (s := hass.states.get("sun.sun")) is not None and s.state == "below_horizon"  # noqa: E731
-        self.fusion = Fusion(mics, hass.config.latitude, hass.config.longitude,
+        self.fusion = Fusion(mics, self.lat, self.lon,
                              ignore=opt.get(CONF_IGNORE) or (), adsb=opt.get(CONF_ADSB, "off") != "off",
                              night=sun, imperial=use_imperial(hass, opt.get(CONF_UNITS)))
         ref = Analyzer(SAMPLE_RATE)
@@ -136,7 +141,7 @@ class Hub:
                      "cols_per_s": ref.cols_per_s, "db_min": DB_MIN, "db_max": DB_MAX,
                      "backlog_s": BACKLOG_S, "version": VERSION, "rate": SAMPLE_RATE,
                      "units": "mi" if self.fusion.imperial else "km",
-                     "lat": hass.config.latitude, "lon": hass.config.longitude}
+                     "lat": self.lat, "lon": self.lon}
         self._backlog_bytes = int(BACKLOG_S * ref.cols_per_s) * N_BANDS
 
         ffmpeg = get_ffmpeg_manager(hass).binary
@@ -154,8 +159,8 @@ class Hub:
             self._tasks.append(bg(hass, birdnet_stream(self.session, base, self._on_birdnet), "soundscape-birdnet"))
         if opt.get(CONF_ADSB, "off") != "off":
             self._tasks.append(bg(hass, self._aircraft_loop(), "soundscape-adsb"))
-        if feed := resolve_feed(opt.get(CONF_DISPATCH, "off"), hass.config.latitude, hass.config.longitude):
-            self._dispatch = Dispatch(self.session, feed, hass.config.latitude, hass.config.longitude)
+        if feed := resolve_feed(opt.get(CONF_DISPATCH, "off"), self.lat, self.lon):
+            self._dispatch = Dispatch(self.session, feed, self.lat, self.lon)
             self.meta["dispatch"] = self._dispatch.feed["name"]
             self._tasks.append(bg(hass, self._dispatch_loop(), "soundscape-dispatch"))
 
@@ -191,6 +196,20 @@ class Hub:
             for conn, msg_id, wanted in list(self.subscribers.values()):
                 if wanted is None or mic in wanted:
                     conn.send_message(websocket_api.event_message(msg_id, payload))
+
+    # ------------------------------------------------------------ the house
+    async def async_set_home(self, lat: float, lon: float) -> None:
+        """Move the house, as placed on the card's map. Kept across restarts."""
+        self.lat, self.lon = lat, lon
+        self.fusion.lat, self.fusion.lon = lat, lon
+        self.fusion.set_aircraft([], 0.0)  # positions were relative to the old spot
+        if self._dispatch:
+            self._dispatch.lat, self._dispatch.lon = lat, lon
+            self._dispatch._places.clear()
+        self.meta = {**self.meta, "lat": lat, "lon": lon}
+        await self._home_store.async_save({"lat": lat, "lon": lon})
+        for conn, msg_id, _ in list(self.subscribers.values()):
+            conn.send_message(websocket_api.event_message(msg_id, {"type": "meta", "meta": self.meta}))
 
     # ---------------------------------------------------------- live audio
     def listen(self, mic: str, key: int, connection, msg_id: int) -> None:
@@ -305,14 +324,14 @@ class Hub:
                 await store.async_save({"at": time.time(), "types": self.types})
             except Exception as err:  # noqa: BLE001
                 _LOGGER.info("Soundscape: aircraft type list not refreshed (%s)", err)
-        opt, cfg = self.opt, self.hass.config
+        opt = self.opt
         fails = 0
         while True:
             try:
                 raw = await fetch_aircraft(self.session, opt.get(CONF_ADSB),
                                            (opt.get(CONF_ADSB_URL) or "") if opt.get(CONF_ADSB) == "custom" else "",
-                                           cfg.latitude, cfg.longitude, float(opt.get(CONF_ADSB_RADIUS, 15)))
-                self.fusion.set_aircraft(prepare_aircraft(raw, cfg.latitude, cfg.longitude, self.types), time.time())
+                                           self.lat, self.lon, float(opt.get(CONF_ADSB_RADIUS, 15)))
+                self.fusion.set_aircraft(prepare_aircraft(raw, self.lat, self.lon, self.types), time.time())
                 self.status["adsb"], fails = "ok", 0
             except asyncio.CancelledError:
                 raise
@@ -419,6 +438,22 @@ def ws_listen(hass: HomeAssistant, connection, msg) -> None:
     connection.send_result(msg["id"])
 
 
+@websocket_api.websocket_command({
+    vol.Required("type"): f"{DOMAIN}/set_home",
+    vol.Required("lat"): vol.All(vol.Coerce(float), vol.Range(min=-90, max=90)),
+    vol.Required("lon"): vol.All(vol.Coerce(float), vol.Range(min=-180, max=180)),
+})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_set_home(hass: HomeAssistant, connection, msg) -> None:
+    hub: Hub | None = hass.data.get(DOMAIN)
+    if hub is None or hub.fusion is None:
+        connection.send_error(msg["id"], "not_ready", "Soundscape is not set up")
+        return
+    await hub.async_set_home(msg["lat"], msg["lon"])
+    connection.send_result(msg["id"])
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if f"{DOMAIN}_static" not in hass.data:
         hass.data[f"{DOMAIN}_static"] = True
@@ -427,6 +462,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         add_extra_js_url(hass, f"{CARD_URL}?v={VERSION}")
         websocket_api.async_register_command(hass, ws_subscribe)
         websocket_api.async_register_command(hass, ws_listen)
+        websocket_api.async_register_command(hass, ws_set_home)
     hub = Hub(hass, entry)
     await hub.async_start()
     hass.data[DOMAIN] = hub

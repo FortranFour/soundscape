@@ -44,11 +44,15 @@ async def test_flow_capture_and_feed(hass, hass_ws_client, tmp_path, socket_enab
     hass.states.async_set("binary_sensor.front_door_shatter_sound", "on")
     hass.states.async_set("sensor.backyard_dog_count", "1")
 
+    # A US household: setup asks in miles and feet and stores kilometres and metres.
+    from homeassistant.util.unit_system import US_CUSTOMARY_SYSTEM
+    hass.config.units = US_CUSTOMARY_SYSTEM
+
     # --- setup flow, with no Frigate, BirdNET-Go or ADS-B
     result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": "user"})
     assert result["step_id"] == "user"
     result = await hass.config_entries.flow.async_configure(
-        result["flow_id"], {"adsb_provider": "off", "adsb_radius_km": 15, "dispatch": "off", "units": "imperial"})
+        result["flow_id"], {"adsb_provider": "off", "adsb_radius_km": 9, "dispatch": "off", "units": "auto"})  # 9 miles
     assert result["step_id"] == "cameras", result
     result = await hass.config_entries.flow.async_configure(result["flow_id"], {
         "cameras": [], "stream_template": "rtsp://{host}:8554/{camera}", "ignore": [],
@@ -60,6 +64,7 @@ async def test_flow_capture_and_feed(hass, hass_ws_client, tmp_path, socket_enab
     entry = result["result"]
     await hass.async_block_till_done()
     assert entry.options["geometry"] == {"front": [180, 7.92], "backyard": [0, 12.19]}  # stored in metres
+    assert entry.options["adsb_radius_km"] == 14.5
     assert hass.states.get("binary_sensor.soundscape_siren").state == "off"
     assert hass.states.get("sensor.soundscape_now_hearing").state == "Quiet"
 
@@ -107,6 +112,20 @@ async def test_flow_capture_and_feed(hass, hass_ws_client, tmp_path, socket_enab
     assert hass.states.get("binary_sensor.soundscape_siren").state == "on"
     assert hass.states.get("sensor.soundscape_now_hearing").state == "Siren"
     assert all(m["ok"] for m in states[-1]["mics"])
+
+    # the house can be moved from the card's map; it is kept and told to every open card
+    hub = hass.data["soundscape"]
+    await ws.send_json({"id": 9, "type": "soundscape/set_home", "lat": 32.7301, "lon": -117.1502})
+    seen = {}
+    async with asyncio.timeout(5):
+        while len(seen) < 2:
+            msg = await ws.receive_json()
+            if msg["id"] == 9:
+                seen["result"] = msg["success"]
+            elif msg.get("event", {}).get("type") == "meta":
+                seen["meta"] = msg["event"]["meta"]
+    assert seen["result"] and seen["meta"]["lat"] == 32.7301
+    assert (hub.lat, hub.fusion.lon) == (32.7301, -117.1502)
 
     assert await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()

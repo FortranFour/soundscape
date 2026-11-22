@@ -14,6 +14,14 @@
   import * as mdi from './node_modules/@mdi/js/mdi.js';
   customElements.define('ha-card', class extends HTMLElement {
     connectedCallback() { this.style.cssText = 'display:block;background:var(--card-background-color);border:1px solid var(--divider-color);border-radius:12px'; }
+    set header(text) {   // Home Assistant's stock card header
+      this.querySelector('h1.card-header')?.remove();
+      if (!text) return;
+      const h = document.createElement('h1');
+      h.className = 'card-header'; h.textContent = text;
+      h.style.cssText = 'margin:0;padding:12px 16px 16px;font:400 24px/48px Roboto,sans-serif;letter-spacing:-0.012em;color:var(--primary-text-color)';
+      this.prepend(h);
+    }
   });
   customElements.define('ha-icon', class extends HTMLElement {
     static observedAttributes = ['icon'];
@@ -35,7 +43,7 @@
   card.setConfig({ title: 'Soundscape', ...JSON.parse(q.get('config') || '{}') });
   document.body.append(card);
   window.card = card; window.calls = [];
-  card.hass = { connection: { subscribeMessage: async (cb, msg) => {
+  card.hass = { user: { is_admin: true }, callWS: async (msg) => { window.calls.push(JSON.stringify(msg)); return null; }, connection: { subscribeMessage: async (cb, msg) => {
     window.calls.push(msg.type + (msg.mic ? ':' + msg.mic : ''));
     if (msg.type === 'soundscape/listen') { window.pcm = cb; return () => window.calls.push('stop:' + msg.mic); }
     cb(init); window.feed = cb; return () => {};
