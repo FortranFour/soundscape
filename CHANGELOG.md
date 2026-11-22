@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.4
+
+- Street maps come through Home Assistant's own map tile proxy where the installed version has one, and otherwise straight from OpenStreetMap with the site's address sent as its servers require. CARTO, tried in 0.2.2, turned out to want an API key.
+- card-mod and UIX styles now apply. The card's frame is created with the card and never rebuilt, so styles attached to it at creation are kept.
+- A moving `garbage_truck` seen by Frigate counts as a vehicle.
+
 ## 0.2.3
 
 - Title is a plain 20 px medium heading, the size commonly used for card titles built with button-card, instead of the larger stock header. Its size, weight, line height, colour and padding can be set with `--soundscape-title-*` variables.

@@ -43,7 +43,8 @@ try:
                 tiles.append(route.request.url)
                 route.fulfill(body=tile(sum(map(ord, route.request.url))), content_type="image/png",
                               headers={"Access-Control-Allow-Origin": "*"})
-            pg.route("**/basemaps.cartocdn.com/**", serve)
+            pg.route("**/api/map_tiles/raster/**", serve)
+            pg.route("**/tile.openstreetmap.org/**", serve)
             pg.route("**/server.arcgisonline.com/**", serve)
             pg.goto(f"http://127.0.0.1:8765/dev/harness.html?theme={theme}&config={quote(json.dumps(config))}" + (f"&open={opened}" if opened else ""))
             pg.wait_for_function("window.ready === true", timeout=15000)
@@ -56,7 +57,7 @@ try:
                     return {size: cv.width, covered: Math.round(lit / (Math.PI * cv.width * cv.width / 4) * 100) + '%',
                             zooms: [...new Set([...card.shadowRoot.host.constructor ? [] : []])].length,
                             planes: card.shadowRoot.querySelectorAll('.plot .ac').length, note: !card.shadowRoot.querySelector('.note').hidden}; })()"""),
-                      "zoom levels:", sorted({int(u.split("/tile/")[1].split("/")[0]) if "/tile/" in u else int(u.split("/voyager/")[1].split("/")[0]) for u in tiles}))
+                      "zoom levels:", sorted({int(u.split("/tile/")[1].split("/")[0]) if "/tile/" in u else int(u.split("/raster/")[1].split("/")[0]) for u in tiles}))
             if name == "dark":
                 # scrolling list keeps its place across updates; filters; live audio controls
                 rows = pg.evaluate("card.shadowRoot.querySelectorAll('.log .row').length")
@@ -81,7 +82,7 @@ try:
         pg = b.new_page(viewport={"width": 520, "height": 900})
         errs = []
         pg.on("pageerror", lambda e: errs.append(str(e)))
-        pg.route("**/basemaps.cartocdn.com/**", lambda r: r.fulfill(body=tile(3), content_type="image/png"))
+        pg.route("**/api/map_tiles/raster/**", lambda r: r.fulfill(body=tile(3), content_type="image/png"))
         pg.goto("http://127.0.0.1:8765/dev/harness.html?theme=dark&config=" + quote(json.dumps({"radar": "map", "map_radius_ft": 200})))
         pg.wait_for_function("window.ready === true", timeout=15000)
         view = lambda: pg.evaluate("({r: Math.round(card._view.radius * 10) / 10, ox: Math.round(card._view.ox), oy: Math.round(card._view.oy), pin: !card.shadowRoot.querySelector('.sethome').hidden, ref: card.shadowRoot.querySelector('.tiles img').hasAttribute('referrerpolicy')})")  # noqa: E731
@@ -102,9 +103,26 @@ try:
         print("after house moved", view())
         pg.reload(); pg.wait_for_function("window.ready === true", timeout=15000)
         print("after reload (zoom remembered)", view(), "errors", errs)
+        # ---- streets on a Home Assistant without the tile proxy: straight from OpenStreetMap, saying where from
+        pg = b.new_page(viewport={"width": 520, "height": 700})
+        seen = []
+        pg.route("**/tile.openstreetmap.org/**", lambda r: (seen.append(r.request.headers.get("referer")), r.fulfill(body=tile(3), content_type="image/png")))
+        pg.goto("http://127.0.0.1:8765/dev/harness.html?proxy=0&theme=dark&config=" + quote(json.dumps({"radar": "map"})))
+        pg.wait_for_function("window.ready === true", timeout=15000); pg.wait_for_timeout(800)
+        print("no proxy -> OpenStreetMap tiles:", len(seen), "referer sent:", set(seen),
+              "| policy on img:", pg.evaluate("card.shadowRoot.querySelector('.tiles img')?.getAttribute('referrerpolicy')"))
+        # ---- the frame is permanent: a style node put into the shadow root at creation survives everything
+        pg.evaluate("""(() => { const c = document.createElement('soundscape-card'); c.setConfig({title: 'X', card_mod: {style: 'x'}});
+            const before = !!c.shadowRoot?.querySelector('ha-card'); const mark = document.createElement('uix-node'); c.shadowRoot.appendChild(mark);
+            const frame = c.shadowRoot.querySelector('ha-card'); document.body.append(c); c.hass = card._hass; window.probe = {c, before, frame}; })()""")
+        pg.wait_for_timeout(500)
+        print("frame before attach:", pg.evaluate("probe.before"), "| style node kept:", pg.evaluate("!!probe.c.shadowRoot.querySelector('uix-node')"),
+              "| same ha-card:", pg.evaluate("probe.frame === probe.c.shadowRoot.querySelector('ha-card')"), "| config visible:", pg.evaluate("!!probe.c._config.card_mod"),
+              "| rendered:", pg.evaluate("!!probe.c.shadowRoot.querySelector('.now')"))
+
         # ---- fisheye when no tile can be read
         pg = b.new_page(viewport={"width": 520, "height": 700})
-        pg.route("**/basemaps.cartocdn.com/**", lambda r: r.abort())
+        pg.route("**/api/map_tiles/raster/**", lambda r: r.abort())
         pg.goto("http://127.0.0.1:8765/dev/harness.html?theme=dark&config=" + quote(json.dumps({"radar": "fisheye"})))
         pg.wait_for_function("window.ready === true", timeout=15000); pg.wait_for_timeout(1500)
         print("tiles unreadable -> note:", pg.evaluate("card.shadowRoot.querySelector('.note').textContent.slice(0, 60)"))

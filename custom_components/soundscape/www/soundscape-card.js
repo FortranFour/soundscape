@@ -24,7 +24,7 @@
  *   log_max: 100              # rows kept in the list
  *   log_hide: []              # kinds to leave out, e.g. [vehicle, voice]
  */
-const VERSION = '0.2.3';
+const VERSION = '0.2.4';
 
 const GROUP = {
   bird: 'life', coyote: 'life', dog: 'life', cat: 'life', voice: 'life',
@@ -56,12 +56,12 @@ const PLANE = {
   aircraft: ['M0 -6 L4 5.5 L0 3 L-4 5.5 Z', ''],
 };
 
-const TILES = {
-  /* CARTO's rendering of OpenStreetMap, as Home Assistant's own map uses. OpenStreetMap's own tile servers
-     refuse requests that carry no page address, and Home Assistant tells the browser not to send one. */
-  streets: ['https://basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png', '© OpenStreetMap contributors © CARTO', 20],
-  satellite: ['https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', 'Imagery © Esri and its data providers', 19],
-};
+/* [address, credit, deepest zoom, referrer policy] */
+const SATELLITE = ['https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', 'Imagery © Esri and its data providers', 19, null];
+const OSM_CREDIT = '© OpenStreetMap contributors';
+/* OpenStreetMap's servers want to know which page is asking. Home Assistant tells the browser not to
+   say, so the tiles ask for the site's address (never the full page address) to be sent after all. */
+const OSM_DIRECT = ['https://tile.openstreetmap.org/{z}/{x}/{y}.png', OSM_CREDIT, 19, 'origin'];
 
 const TILE_CACHE = new Map();   // pixel data of tiles used by the fisheye view, shared by every card on the page
 
@@ -171,10 +171,15 @@ class SoundscapeCard extends HTMLElement {
     if (this.isConnected) this._subscribe();
   }
 
-  connectedCallback() {
-    if (!this.shadowRoot) this.attachShadow({ mode: 'open' });
-    this._subscribe();
+  constructor() {
+    super();
+    /* Built once, here, and never replaced: card-mod and UIX put their styles into this shadow root
+       as soon as the card is created, and would lose them if it were rebuilt. */
+    this.attachShadow({ mode: 'open' });
+    this.shadowRoot.innerHTML = `<style>${STYLE}</style><ha-card><div class="root"></div></ha-card>`;
   }
+
+  connectedCallback() { this._subscribe(); }
 
   disconnectedCallback() {
     this._unsub?.then((u) => u && u()).catch(() => {});
@@ -283,9 +288,7 @@ class SoundscapeCard extends HTMLElement {
   /* -------------------------------------------------------------- render */
   _build() {
     const c = this._c, fish = c.radar === 'fisheye', map = c.radar === 'map' || fish;
-    this.shadowRoot.innerHTML = `
-      <style>${STYLE}</style>
-      <ha-card>
+    this.shadowRoot.querySelector('.root').innerHTML = `
         <div class="head"><span class="title"></span><span class="status"></span></div>
         <div class="body">
         <div class="now"></div>
@@ -308,8 +311,7 @@ class SoundscapeCard extends HTMLElement {
           </div></div>` : ''}
         ${c.show_log ? `<div class="logwrap"><div class="filters"></div>
           <div class="log" style="max-height:${Math.max(1, Number(c.log_rows) || 8) * 28}px"></div></div>` : ''}
-        </div>
-      </ha-card>`;
+        </div>`;
     const root = this.shadowRoot;
     root.querySelector('.title').textContent = c.title || '';
     if (!this._wired) {
@@ -358,7 +360,7 @@ class SoundscapeCard extends HTMLElement {
   _render() {
     if (!this.shadowRoot) return;
     if (this._error && !this._state) {
-      this.shadowRoot.innerHTML = `<style>${STYLE}</style><ha-card><div class="empty">Soundscape is not answering: ${esc(this._error)}.<br>Is the Soundscape integration set up?</div></ha-card>`;
+      this.shadowRoot.querySelector('.root').innerHTML = `<div class="empty">Soundscape is not answering: ${esc(this._error)}.<br>Is the Soundscape integration set up?</div>`;
       this._built = false;
       return;
     }
@@ -381,6 +383,7 @@ class SoundscapeCard extends HTMLElement {
       this._set('.why', `<b>${esc(open.label)}</b> · ${Math.round(open.conf * 100)}% · ${clock(open.start)}<ul>${lines.join('')}${disp.join('')}</ul>${this._levels(open)}`);
     }
 
+    if (this._c.show_radar && this._c.radar !== 'schematic') this._source();   // renews the street tiles' token when due
     if (this._c.show_radar) this._set('.plot', this._c.radar === 'map' ? this._mapPlot(st) : this._c.radar === 'fisheye' ? this._fishPlot(st) : this._radar(st));
     if (this._c.show_spectrogram) this._specUi(st);
     if (this._c.show_log) this._log(st);
@@ -626,11 +629,35 @@ class SoundscapeCard extends HTMLElement {
     }, { passive: false });
   }
 
+  /* Street tiles come through Home Assistant's own map proxy where this version has one: nothing is
+     asked of an outside server by the browser, and the fisheye view can always read them. Otherwise
+     straight from OpenStreetMap. The proxy's token is renewed well inside its half-hour life. */
+  _source() {
+    const c = this._c;
+    if (c.map_tiles) return [c.map_tiles, c.map_attribution || '', c.map_max_zoom || 19, c.map_referrer || null];
+    if (c.map_style === 'satellite') return SATELLITE;
+    if (!(this._street && Date.now() - this._street.at < 20 * 60 * 1000) && !this._streetBusy && this._hass) {
+      this._streetBusy = true;
+      const first = !this._street;
+      this._hass.callWS({ type: 'map_tiles/access_token' }).then((r) => {
+        if (!r?.token) throw new Error('no token');
+        const base = this._hass.hassUrl ? this._hass.hassUrl('/api/map_tiles') : '/api/map_tiles';
+        return [`${base}/raster/{z}/{x}/{y}.png?token=${encodeURIComponent(r.token)}`, OSM_CREDIT, 19, null];
+      }).catch(() => OSM_DIRECT).then((src) => {
+        this._street = { at: Date.now(), src };
+        this._streetBusy = false;
+        this._tiles();
+        if (first && this._c.radar === 'fisheye') this._fishRender();
+      });
+    }
+    return this._street?.src || null;
+  }
+
   _tiles() {
-    const el = this.shadowRoot?.querySelector('.tiles'), m = this._meta;
-    if (!el || !m || m.lat == null) return;
-    const c = this._c, v = this._viewGet(), radius = v.radius;
-    const [url, credit, maxZoom] = c.map_tiles ? [c.map_tiles, c.map_attribution || '', c.map_max_zoom || 19] : (TILES[c.map_style] || TILES.streets);
+    const el = this.shadowRoot?.querySelector('.tiles'), m = this._meta, src = this._source();
+    if (!el || !m || m.lat == null || !src) return;
+    const v = this._viewGet(), radius = v.radius;
+    const [url, credit, maxZoom, referrer] = src;
     const cosLat = Math.cos(m.lat * Math.PI / 180);
     const lat = m.lat + v.oy / 111320, lon = m.lon + v.ox / (111320 * cosLat);
     const z = Math.max(1, Math.min(maxZoom, Math.floor(Math.log2(3.4 * 256 * 156543.03392 * cosLat / (2 * radius)))));
@@ -642,7 +669,7 @@ class SoundscapeCard extends HTMLElement {
     for (let ty = Math.floor(y0); ty <= Math.floor(y0 + span); ty++) {
       for (let tx = Math.floor(x0); tx <= Math.floor(x0 + span); tx++) {
         const src = url.replace('{z}', z).replace('{x}', ((tx % n) + n) % n).replace('{y}', ty);
-        out += `<img alt="" draggable="false" src="${esc(src)}" style="left:${((tx - x0) / span * 100).toFixed(3)}%;top:${((ty - y0) / span * 100).toFixed(3)}%;width:${(100 / span + 0.05).toFixed(3)}%">`;
+        out += `<img alt="" draggable="false"${referrer ? ` referrerpolicy="${referrer}"` : ''} src="${esc(src)}" style="left:${((tx - x0) / span * 100).toFixed(3)}%;top:${((ty - y0) / span * 100).toFixed(3)}%;width:${(100 / span + 0.05).toFixed(3)}%">`;
       }
     }
     if (this._tileSig !== out) { this._tileSig = out; el.innerHTML = out; }
@@ -723,12 +750,13 @@ class SoundscapeCard extends HTMLElement {
     el.addEventListener('wheel', (e) => { e.preventDefault(); this._fishZoom(e.deltaY > 0 ? 1.25 : 0.8); }, { passive: false });
   }
 
-  _tile(z, x, y, url) {
-    const key = `${url}|${z}/${x}/${y}`;
+  _tile(z, x, y, url, referrer) {
+    const key = `${url.split('?')[0]}|${z}/${x}/${y}`;
     if (!TILE_CACHE.has(key)) {
       TILE_CACHE.set(key, new Promise((resolve) => {
         const img = new Image();
         img.crossOrigin = 'anonymous';           // needed to read the pixels back
+        if (referrer) img.referrerPolicy = referrer;
         img.onload = () => {
           try {
             const cv = document.createElement('canvas');
@@ -749,9 +777,10 @@ class SoundscapeCard extends HTMLElement {
   async _fishRender() {
     const cv = this.shadowRoot?.querySelector('canvas.warp'), m = this._meta;
     if (!cv || !m || m.lat == null || !cv.clientWidth) return;
+    const f = this._fishGet(), src = this._source();
+    if (!src) return;                                                   // street source still being worked out
+    const [url, credit, maxZoom, referrer] = src;
     const run = this._fishRun = (this._fishRun || 0) + 1;
-    const c = this._c, f = this._fishGet();
-    const [url, credit, maxZoom] = c.map_tiles ? [c.map_tiles, c.map_attribution || '', c.map_max_zoom || 19] : (TILES[c.map_style] || TILES.streets);
     this.shadowRoot.querySelector('.credit').textContent = credit;
     const S = Math.min(760, Math.round(cv.clientWidth * Math.min(2, window.devicePixelRatio || 1))), half = S / 2;
     const cosLat = Math.cos(m.lat * Math.PI / 180), M0 = 156543.03392 * cosLat;
@@ -777,7 +806,7 @@ class SoundscapeCard extends HTMLElement {
       }
     }
     const keys = [...need.keys()];
-    const loaded = await Promise.all([...need.values()].map(([z, x, y]) => this._tile(z, x, y, url)));
+    const loaded = await Promise.all([...need.values()].map(([z, x, y]) => this._tile(z, x, y, url, referrer)));
     if (run !== this._fishRun) return;                                  // a newer render has started
     const tiles = new Map(keys.map((key, i) => [key, loaded[i]]));
     const note = this.shadowRoot.querySelector('.note');

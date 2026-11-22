@@ -43,7 +43,11 @@
   card.setConfig({ title: 'Soundscape', ...JSON.parse(q.get('config') || '{}') });
   document.body.append(card);
   window.card = card; window.calls = [];
-  card.hass = { user: { is_admin: true }, callWS: async (msg) => { window.calls.push(JSON.stringify(msg)); return null; }, connection: { subscribeMessage: async (cb, msg) => {
+  card.hass = { user: { is_admin: true }, callWS: async (msg) => {
+    window.calls.push(JSON.stringify(msg));
+    if (msg.type === 'map_tiles/access_token') { if (q.get('proxy') === '0') throw new Error('unknown command'); return { token: 'tok123' }; }
+    return null;
+  }, connection: { subscribeMessage: async (cb, msg) => {
     window.calls.push(msg.type + (msg.mic ? ':' + msg.mic : ''));
     if (msg.type === 'soundscape/listen') { window.pcm = cb; return () => window.calls.push('stop:' + msg.mic); }
     cb(init); window.feed = cb; return () => {};

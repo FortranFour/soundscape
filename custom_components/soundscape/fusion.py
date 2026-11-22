@@ -72,7 +72,7 @@ FRIGATE_AUDIO = {
 }
 # Entity ids spell these with underscores.
 FRIGATE_AUDIO.update({k.replace("-", "_"): v for k, v in list(FRIGATE_AUDIO.items()) if "-" in k})
-FRIGATE_MOVING = ("car", "truck", "motorcycle", "bus")
+FRIGATE_MOVING = ("car", "truck", "motorcycle", "bus", "garbage_truck")
 
 # BirdNET's non-bird labels, matched on the common or scientific name
 BIRDNET_OTHER = (
