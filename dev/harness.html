@@ -1,0 +1,40 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Soundscape card harness</title>
+<style>
+  body { margin: 0; padding: 20px; font-family: Roboto, "Segoe UI", sans-serif; background: var(--bg); }
+  body.light { --bg: #fafafa; --card-background-color: #fff; --primary-text-color: #212121; --secondary-text-color: #727272;
+    --divider-color: rgba(0,0,0,.12); --primary-color: #03a9f4; --secondary-background-color: #e5e5e5; }
+  body.dark { --bg: #111; --card-background-color: #1c1c1c; --primary-text-color: #e1e1e1; --secondary-text-color: #9b9b9b;
+    --divider-color: rgba(225,225,225,.12); --primary-color: #03a9f4; --secondary-background-color: #282828; }
+  soundscape-card { display: block; width: 480px; }
+</style>
+<body class="light">
+<script type="module">
+  import * as mdi from './node_modules/@mdi/js/mdi.js';
+  customElements.define('ha-card', class extends HTMLElement {
+    connectedCallback() { this.style.cssText = 'display:block;background:var(--card-background-color);border:1px solid var(--divider-color);border-radius:12px'; }
+  });
+  customElements.define('ha-icon', class extends HTMLElement {
+    static observedAttributes = ['icon'];
+    attributeChangedCallback() { this.draw(); }
+    connectedCallback() { this.draw(); }
+    draw() {
+      const key = 'mdi' + (this.getAttribute('icon') || '').replace('mdi:', '').split('-').map((p) => p[0].toUpperCase() + p.slice(1)).join('');
+      const size = getComputedStyle(this).getPropertyValue('--mdc-icon-size') || '24px';
+      this.style.display = 'inline-flex';
+      this.innerHTML = `<svg viewBox="0 0 24 24" style="width:${size};height:${size};fill:currentColor"><path d="${mdi[key] || ''}"/></svg>`;
+      if (!mdi[key]) console.error('no icon', key);
+    }
+  });
+  const q = new URLSearchParams(location.search);
+  document.body.className = q.get('theme') || 'light';
+  const init = await (await fetch('./fixture.json')).json();
+  await import('../custom_components/soundscape/www/soundscape-card.js');
+  const card = document.createElement('soundscape-card');
+  card.setConfig({ title: 'Soundscape', ...(q.get('mic') ? { mic: q.get('mic') } : {}) });
+  document.body.append(card);
+  card.hass = { connection: { subscribeMessage: async (cb) => { cb(init); window.feed = cb; return () => {}; } } };
+  if (q.get('open')) { card._open = String(init.active.find((e) => e.cls === q.get('open'))?.id); card._render(); }
+  window.ready = true;
+</script>

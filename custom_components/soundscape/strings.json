@@ -1,0 +1,112 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Where to listen and what to consult",
+        "description": "Everything here is optional except at least one microphone on the next page.",
+        "data": {
+          "frigate_url": "Frigate address",
+          "birdnet_url": "BirdNET-Go address",
+          "adsb_provider": "Aircraft positions (ADS-B)",
+          "adsb_url": "Your own ADS-B address",
+          "adsb_radius_km": "Look for aircraft within",
+          "dispatch": "Emergency dispatch feed"
+        },
+        "data_description": {
+          "frigate_url": "Used to list cameras and reach their audio, e.g. http://ccab4aaf-frigate-fa:5000",
+          "birdnet_url": "For bird species, e.g. http://db21ed7f-birdnet-go:8080",
+          "adsb_url": "Only for 'My own receiver': a tar1090 aircraft.json address, or any readsb-style address with {lat} {lon} {nm}",
+          "dispatch": "Looked at only after a siren has been heard"
+        }
+      },
+      "cameras": {
+        "title": "Microphones",
+        "data": {
+          "cameras": "Cameras to listen to",
+          "stream_template": "Audio address pattern",
+          "stream_overrides": "Other microphones, or addresses that differ",
+          "ignore": "Kinds of sound to leave out"
+        },
+        "data_description": {
+          "stream_template": "{host} is Frigate's host, {camera} the camera's restream name",
+          "stream_overrides": "One per line: name=address. Anything ffmpeg can open.",
+          "cameras": "Each one costs an ffmpeg process decoding audio only"
+        }
+      },
+      "geometry": {
+        "title": "Where each microphone is",
+        "description": "Seen from the middle of the house: the compass bearing to each microphone (0 = north, 90 = east) and how far away it is. Rough figures are enough; they only steer the direction estimate."
+      }
+    },
+    "error": {
+      "cannot_connect": "Frigate did not answer at that address",
+      "no_mics": "Choose at least one camera or add one microphone line",
+      "adsb_url": "Give the address of your receiver"
+    },
+    "abort": {
+      "single_instance_allowed": "Soundscape is already set up"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Where to listen and what to consult",
+        "description": "Everything here is optional except at least one microphone on the next page.",
+        "data": {
+          "frigate_url": "Frigate address",
+          "birdnet_url": "BirdNET-Go address",
+          "adsb_provider": "Aircraft positions (ADS-B)",
+          "adsb_url": "Your own ADS-B address",
+          "adsb_radius_km": "Look for aircraft within",
+          "dispatch": "Emergency dispatch feed"
+        },
+        "data_description": {
+          "frigate_url": "Used to list cameras and reach their audio, e.g. http://ccab4aaf-frigate-fa:5000",
+          "birdnet_url": "For bird species, e.g. http://db21ed7f-birdnet-go:8080",
+          "adsb_url": "Only for 'My own receiver': a tar1090 aircraft.json address, or any readsb-style address with {lat} {lon} {nm}",
+          "dispatch": "Looked at only after a siren has been heard"
+        }
+      },
+      "cameras": {
+        "title": "Microphones",
+        "data": {
+          "cameras": "Cameras to listen to",
+          "stream_template": "Audio address pattern",
+          "stream_overrides": "Other microphones, or addresses that differ",
+          "ignore": "Kinds of sound to leave out"
+        },
+        "data_description": {
+          "stream_template": "{host} is Frigate's host, {camera} the camera's restream name",
+          "stream_overrides": "One per line: name=address. Anything ffmpeg can open.",
+          "cameras": "Each one costs an ffmpeg process decoding audio only"
+        }
+      },
+      "geometry": {
+        "title": "Where each microphone is",
+        "description": "Seen from the middle of the house: the compass bearing to each microphone (0 = north, 90 = east) and how far away it is. Rough figures are enough; they only steer the direction estimate."
+      }
+    },
+    "error": {
+      "cannot_connect": "Frigate did not answer at that address",
+      "no_mics": "Choose at least one camera or add one microphone line",
+      "adsb_url": "Give the address of your receiver"
+    }
+  },
+  "selector": {
+    "adsb": {
+      "options": {
+        "adsb.fi": "adsb.fi",
+        "adsb.lol": "adsb.lol",
+        "airplanes.live": "airplanes.live",
+        "custom": "My own receiver",
+        "off": "Off"
+      }
+    },
+    "dispatch": {
+      "options": {
+        "off": "Off",
+        "sdfd": "San Diego Fire-Rescue"
+      }
+    }
+  }
+}
