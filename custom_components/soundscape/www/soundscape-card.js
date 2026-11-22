@@ -5,6 +5,8 @@
  *
  *   type: custom:soundscape-card
  *   title: Soundscape
+ *   show_icon: true           # the icon beside the title
+ *   icon: mdi:waveform
  *   show_radar: true
  *   radar: schematic          # or: map (true scale), fisheye (map with logarithmic distance),
  *                             #     hyperbolic (the fisheye with a focus you can drag anywhere)
@@ -25,7 +27,7 @@
  *   log_max: 100              # rows kept in the list
  *   log_hide: []              # kinds to leave out, e.g. [vehicle, voice]
  */
-const VERSION = '0.3.0';
+const VERSION = '0.3.1';
 
 const GROUP = {
   bird: 'life', coyote: 'life', dog: 'life', cat: 'life', voice: 'life',
@@ -42,7 +44,7 @@ const KINDS = {
 };
 
 const DEFAULTS = {
-  title: 'Soundscape', show_radar: true, radar: 'schematic', aircraft: 'all', map_style: 'streets', map_radius_m: 60,
+  title: 'Soundscape', show_icon: true, icon: 'mdi:waveform', show_radar: true, radar: 'schematic', aircraft: 'all', map_style: 'streets', map_radius_m: 60,
   range_km: 10, radar_recent_seconds: 120, units: 'auto', show_spectrogram: true, mic: 'auto',
   spectrogram_height: 150, spectrogram_seconds: 60, show_listen: true, volume: 80,
   show_log: true, log_rows: 8, log_max: 100, log_hide: [],
@@ -98,7 +100,7 @@ class SoundscapeCard extends HTMLElement {
 
   static getConfigForm() {
     const labels = {
-      title: 'Title', show_radar: 'Radar', show_spectrogram: 'Live spectrogram', show_log: 'Recent sounds',
+      title: 'Title', show_icon: 'Title icon', icon: 'Icon', show_radar: 'Radar', show_spectrogram: 'Live spectrogram', show_log: 'Recent sounds',
       show_listen: 'Listen button', radar: 'Radar background', map_style: 'Map', map_radius_m: 'Map reaches',
       map_radius_ft: 'Map reaches', range_km: 'Schematic range for aircraft', range_mi: 'Schematic range for aircraft',
       radar_recent_seconds: 'Keep ended sounds on the radar', aircraft: 'Aircraft to draw',
@@ -108,7 +110,7 @@ class SoundscapeCard extends HTMLElement {
     };
     const mi = document.querySelector('home-assistant')?.hass?.config?.unit_system?.length === 'mi';
     const defaults = {
-      title: 'Soundscape', radar: 'Schematic', aircraft: 'All nearby', map_style: 'Streets', map_radius_m: '60 m', map_radius_ft: '200 ft',
+      title: 'Soundscape', show_icon: 'on', icon: 'mdi:waveform', radar: 'Schematic', aircraft: 'All nearby', map_style: 'Streets', map_radius_m: '60 m', map_radius_ft: '200 ft',
       range_km: '10 km', range_mi: '6 mi', radar_recent_seconds: '120 s (0 turns it off)',
       units: `Automatic (${mi ? 'miles and feet' : 'kilometres and metres'} here)`, mic: 'auto',
       spectrogram_height: '150 px', spectrogram_seconds: '60 s', volume: '80 %', log_rows: '8', log_max: '100',
@@ -119,6 +121,9 @@ class SoundscapeCard extends HTMLElement {
     return {
       schema: [
         { name: 'title', selector: { text: {} } },
+        { type: 'grid', name: '', schema: [
+          { name: 'show_icon', selector: { boolean: {} } }, { name: 'icon', selector: { icon: {} } },
+        ] },
         { type: 'grid', name: '', schema: [
           { name: 'show_radar', selector: { boolean: {} } }, { name: 'show_spectrogram', selector: { boolean: {} } },
           { name: 'show_log', selector: { boolean: {} } }, { name: 'show_listen', selector: { boolean: {} } },
@@ -294,7 +299,7 @@ class SoundscapeCard extends HTMLElement {
   _build() {
     const c = this._c, fish = this._isFish, map = c.radar === 'map' || fish;
     this.shadowRoot.querySelector('.root').innerHTML = `
-        <div class="head"><span class="title"></span><span class="status"></span></div>
+        <div class="head">${c.show_icon && c.icon ? `<ha-icon class="ticon" icon="${esc(c.icon)}"></ha-icon>` : ''}<span class="title"></span><span class="status"></span></div>
         <div class="body">
         <div class="now"></div>
         <div class="why" hidden></div>
@@ -1065,6 +1070,7 @@ const STYLE = `
   .head { display: flex; align-items: baseline; gap: 12px; padding: var(--soundscape-title-padding, 14px 16px 6px); }
   .title { flex: 1; font-size: var(--soundscape-title-font-size, 20px); font-weight: var(--soundscape-title-font-weight, 500);
     line-height: var(--soundscape-title-line-height, 28px); color: var(--soundscape-title-color, var(--primary-text-color)); }
+  .ticon { align-self: center; flex: none; margin-right: -4px; color: var(--soundscape-title-icon-color, var(--secondary-text-color)); --mdc-icon-size: 22px; }
   .status { font-size: 12px; color: var(--secondary-text-color); }
   .body { padding-top: 6px; }
   .status.bad { color: var(--warning-color, #f9a825); }

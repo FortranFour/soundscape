@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.1
+
+- The icon beside the title is back, as an option: `show_icon` (on by default) and `icon` (default `mdi:waveform`).
+
 ## 0.3.0
 
 - Hyperbolic map: `radar: hyperbolic` is the fisheye map with a focus you can drag. Whatever you pull to the middle is magnified while the rest stays in view; the house button returns to the house.

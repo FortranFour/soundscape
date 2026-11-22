@@ -50,6 +50,8 @@ The audio analysis has been tested on synthesized sirens, howls, rotors and prop
 ```yaml
 type: custom:soundscape-card
 title: Soundscape
+show_icon: true
+icon: mdi:waveform
 show_radar: true
 radar: schematic
 aircraft: all
@@ -76,6 +78,7 @@ Everything is also in the card's visual editor, which shows each option's defaul
 
 | Option | Default | |
 | --- | --- | --- |
+| `show_icon`, `icon` | `true`, `mdi:waveform` | The icon beside the title. Its colour follows `--soundscape-title-icon-color`. |
 | `radar` | `schematic` | `schematic` draws distance logarithmically, so the yard and aircraft miles out share one view. `map` puts a real map behind it at true scale. `fisheye` is the map bent to the same logarithmic idea, and `hyperbolic` is the fisheye with a focus you can drag: see below. |
 | `aircraft` | `all` | Which aircraft to draw: `all` nearby, only those `audible` (close enough to be heard), or only those `heard` (matched to a sound). The chips and the list only ever show what was heard. |
 | `map_style` | `streets` | `streets` (OpenStreetMap, through Home Assistant's own map tile proxy where the installed version has one) or `satellite` (Esri World Imagery). For another source set `map_tiles` to a `{z}/{x}/{y}` address and `map_attribution` to its credit line. |
