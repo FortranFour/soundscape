@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.2
+
+- The integration has its own icon and logo: a location pin holding a waveform, between two sound arcs.
+
 ## 0.3.1
 
 - The icon beside the title is back, as an option: `show_icon` (on by default) and `icon` (default `mdi:waveform`).
