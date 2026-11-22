@@ -24,7 +24,7 @@
  *   log_max: 100              # rows kept in the list
  *   log_hide: []              # kinds to leave out, e.g. [vehicle, voice]
  */
-const VERSION = '0.2.1';
+const VERSION = '0.2.2';
 
 const GROUP = {
   bird: 'life', coyote: 'life', dog: 'life', cat: 'life', voice: 'life',
@@ -57,7 +57,9 @@ const PLANE = {
 };
 
 const TILES = {
-  streets: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png', '© OpenStreetMap contributors', 19],
+  /* CARTO's rendering of OpenStreetMap, as Home Assistant's own map uses. OpenStreetMap's own tile servers
+     refuse requests that carry no page address, and Home Assistant tells the browser not to send one. */
+  streets: ['https://basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png', '© OpenStreetMap contributors © CARTO', 20],
   satellite: ['https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', 'Imagery © Esri and its data providers', 19],
 };
 

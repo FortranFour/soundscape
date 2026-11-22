@@ -1,15 +1,21 @@
 {
   "domain": "soundscape",
   "name": "Soundscape",
-  "after_dependencies": ["frigate", "sun"],
-  "codeowners": ["@FortranFour"],
+  "codeowners": [
+    "@FortranFour"
+  ],
   "config_flow": true,
-  "dependencies": ["ffmpeg", "frontend", "http", "websocket_api"],
+  "dependencies": [
+    "ffmpeg",
+    "frontend",
+    "http",
+    "websocket_api"
+  ],
   "documentation": "https://github.com/FortranFour/soundscape",
   "integration_type": "service",
   "iot_class": "local_push",
   "issue_tracker": "https://github.com/FortranFour/soundscape/issues",
   "requirements": [],
   "single_config_entry": true,
-  "version": "0.2.1"
+  "version": "0.2.2"
 }

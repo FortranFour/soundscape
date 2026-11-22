@@ -14,8 +14,8 @@
           "units": "Distances"
         },
         "data_description": {
-          "frigate_url": "Used to list cameras and reach their audio, e.g. http://ccab4aaf-frigate-fa:5000",
-          "birdnet_url": "For bird species, e.g. http://db21ed7f-birdnet-go:8080",
+          "frigate_url": "Used to list cameras and reach their audio. For the Frigate add-on this is usually port 5000 on the host ccab4aaf-frigate-fa.",
+          "birdnet_url": "For bird species. For the BirdNET-Go add-on this is usually port 8080 on the host db21ed7f-birdnet-go.",
           "adsb_url": "Only for 'My own receiver': a tar1090 aircraft.json address, or a readsb-style address with lat, lon and nm placeholders, each in curly braces.",
           "dispatch": "Consulted only after a siren has been heard. Twelve agencies are built in.",
           "units": "Automatic follows Home Assistant's unit system: miles and feet for US customary, kilometres and metres otherwise."
@@ -64,8 +64,8 @@
           "units": "Distances"
         },
         "data_description": {
-          "frigate_url": "Used to list cameras and reach their audio, e.g. http://ccab4aaf-frigate-fa:5000",
-          "birdnet_url": "For bird species, e.g. http://db21ed7f-birdnet-go:8080",
+          "frigate_url": "Used to list cameras and reach their audio. For the Frigate add-on this is usually port 5000 on the host ccab4aaf-frigate-fa.",
+          "birdnet_url": "For bird species. For the BirdNET-Go add-on this is usually port 8080 on the host db21ed7f-birdnet-go.",
           "adsb_url": "Only for 'My own receiver': a tar1090 aircraft.json address, or a readsb-style address with lat, lon and nm placeholders, each in curly braces.",
           "dispatch": "Consulted only after a siren has been heard. Twelve agencies are built in.",
           "units": "Automatic follows Home Assistant's unit system: miles and feet for US customary, kilometres and metres otherwise."

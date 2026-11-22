@@ -76,7 +76,7 @@ Everything is also in the card's visual editor, which shows each option's defaul
 | --- | --- | --- |
 | `radar` | `schematic` | `schematic` draws distance logarithmically, so the yard and aircraft miles out share one view. `map` puts a real map behind it at true scale. `fisheye` is the map bent to the same logarithmic idea: see below. |
 | `aircraft` | `all` | Which aircraft to draw: `all` nearby, only those `audible` (close enough to be heard), or only those `heard` (matched to a sound). The chips and the list only ever show what was heard. |
-| `map_style` | `streets` | `streets` (OpenStreetMap) or `satellite` (Esri World Imagery). For another source set `map_tiles` to a `{z}/{x}/{y}` address and `map_attribution` to its credit line. |
+| `map_style` | `streets` | `streets` (OpenStreetMap data drawn by CARTO, the source Home Assistant's own map uses) or `satellite` (Esri World Imagery). For another source set `map_tiles` to a `{z}/{x}/{y}` address and `map_attribution` to its credit line. |
 | `map_radius_m` or `map_radius_ft` | `60` m (`200` ft) | How far the map reaches to start with. About 60 m shows the property; a few thousand shows the neighbourhood and nearby aircraft. Aircraft beyond the edge sit on it with their distance. |
 | `range_km` or `range_mi` | `10` km (`6` mi) | Outer ring of the schematic radar. |
 | `radar_recent_seconds` | `120` | Sounds that have ended stay on the radar, faded, for this long. `0` turns that off. |
@@ -93,7 +93,7 @@ The map can be dragged, and zoomed with the wheel, a pinch, or the + and − but
 
 ![Fisheye mode](docs/card-fisheye.png)
 
-**Fisheye.** `radar: fisheye` keeps the map near true scale around the house and compresses it logarithmically further out, so the yard and aircraft miles away sit on one real map. Directions are never bent, only distances, so streets curve. The map reach (`map_radius_m` or `map_radius_ft`) is the distance drawn at 30 % of the radius and the aircraft range (`range_km` or `range_mi`) is the rim; the + and − buttons and the wheel change the range. It is drawn from tiles at about ten zoom levels, some thirty tiles in all, and needs a map source that lets its tiles be read back, which OpenStreetMap and Esri do. Satellite reads better than streets here, because street labels come out at a different size in each band. It always centres on the house, so set the house's position in `map` mode first.
+**Fisheye.** `radar: fisheye` keeps the map near true scale around the house and compresses it logarithmically further out, so the yard and aircraft miles away sit on one real map. Directions are never bent, only distances, so streets curve. The map reach (`map_radius_m` or `map_radius_ft`) is the distance drawn at 30 % of the radius and the aircraft range (`range_km` or `range_mi`) is the rim; the + and − buttons and the wheel change the range. It is drawn from tiles at about ten zoom levels, some thirty tiles in all, and needs a map source that lets its tiles be read back, which CARTO and Esri do. Satellite reads better than streets here, because street labels come out at a different size in each band. It always centres on the house, so set the house's position in `map` mode first.
 
 **If the house is in the wrong place.** The map is centred on the location Home Assistant has for your home, which is often a house or two off. Drag the map until the cross in the middle sits on your house, then press the blue pin. That saves the spot as the house for Soundscape only (administrators only; Home Assistant's own location is not changed), and aircraft bearings and distances are measured from it from then on.
 
@@ -173,4 +173,4 @@ python dev/make_fixture.py && python dev/shot.py   # render the card from synthe
 
 ## Credits
 
-The spectrogram follows the look of [BirdNET-Go](https://github.com/tphakala/birdnet-go) by Tomi P. Hakala, which also supplies the bird identifications. Sound and object labels come from [Frigate](https://frigate.video). Maps are OpenStreetMap or Esri World Imagery. Aircraft positions come from the community ADS-B networks, and type data from [tar1090-db](https://github.com/wiedehopf/tar1090-db). Street lookups use OpenStreetMap's Nominatim. MIT licensed.
+The spectrogram follows the look of [BirdNET-Go](https://github.com/tphakala/birdnet-go) by Tomi P. Hakala, which also supplies the bird identifications. Sound and object labels come from [Frigate](https://frigate.video). Street maps are OpenStreetMap data drawn by CARTO; satellite imagery is Esri World Imagery. Aircraft positions come from the community ADS-B networks, and type data from [tar1090-db](https://github.com/wiedehopf/tar1090-db). Street lookups use OpenStreetMap's Nominatim. MIT licensed.

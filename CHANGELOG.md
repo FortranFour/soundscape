@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.2
+
+- Street maps now come from CARTO, as Home Assistant's own map does. OpenStreetMap's servers refuse requests without a page address, and Home Assistant stops the browser from sending one, so they could never have loaded.
+- Setup help text no longer contains web addresses, which Home Assistant's validation rejects, and the manifest no longer names Frigate as a load-order dependency it does not need. No change in behaviour.
+
 ## 0.2.1
 
 - Fisheye map: a third radar background that keeps the house near true scale and compresses distance logarithmically toward the rim, over real imagery.
