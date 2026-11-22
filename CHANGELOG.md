@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.0
+
+- Hyperbolic map: `radar: hyperbolic` is the fisheye map with a focus you can drag. Whatever you pull to the middle is magnified while the rest stays in view; the house button returns to the house.
+
 ## 0.2.4
 
 - Street maps come through Home Assistant's own map tile proxy where the installed version has one, and otherwise straight from OpenStreetMap with the site's address sent as its servers require. CARTO, tried in 0.2.2, turned out to want an API key.

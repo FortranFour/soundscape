@@ -1,6 +1,6 @@
 """Constants for Soundscape."""
 DOMAIN = "soundscape"
-VERSION = "0.2.4"
+VERSION = "0.3.0"
 EVENT = "soundscape_event"
 
 CONF_FRIGATE_URL = "frigate_url"

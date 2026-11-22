@@ -76,7 +76,7 @@ Everything is also in the card's visual editor, which shows each option's defaul
 
 | Option | Default | |
 | --- | --- | --- |
-| `radar` | `schematic` | `schematic` draws distance logarithmically, so the yard and aircraft miles out share one view. `map` puts a real map behind it at true scale. `fisheye` is the map bent to the same logarithmic idea: see below. |
+| `radar` | `schematic` | `schematic` draws distance logarithmically, so the yard and aircraft miles out share one view. `map` puts a real map behind it at true scale. `fisheye` is the map bent to the same logarithmic idea, and `hyperbolic` is the fisheye with a focus you can drag: see below. |
 | `aircraft` | `all` | Which aircraft to draw: `all` nearby, only those `audible` (close enough to be heard), or only those `heard` (matched to a sound). The chips and the list only ever show what was heard. |
 | `map_style` | `streets` | `streets` (OpenStreetMap, through Home Assistant's own map tile proxy where the installed version has one) or `satellite` (Esri World Imagery). For another source set `map_tiles` to a `{z}/{x}/{y}` address and `map_attribution` to its credit line. |
 | `map_radius_m` or `map_radius_ft` | `60` m (`200` ft) | How far the map reaches to start with. About 60 m shows the property; a few thousand shows the neighbourhood and nearby aircraft. Aircraft beyond the edge sit on it with their distance. |
@@ -96,6 +96,10 @@ The map can be dragged, and zoomed with the wheel, a pinch, or the + and − but
 ![Fisheye mode](docs/card-fisheye.png)
 
 **Fisheye.** `radar: fisheye` keeps the map near true scale around the house and compresses it logarithmically further out, so the yard and aircraft miles away sit on one real map. Directions are never bent, only distances, so streets curve. The map reach (`map_radius_m` or `map_radius_ft`) is the distance drawn at 30 % of the radius and the aircraft range (`range_km` or `range_mi`) is the rim; the + and − buttons and the wheel change the range. It is drawn from tiles at about ten zoom levels, some thirty tiles in all, and needs a map source that lets its tiles be read back, which OpenStreetMap and Esri do. Satellite reads better than streets here, because street labels come out at a different size in each band. It always centres on the house, so set the house's position in `map` mode first.
+
+![Hyperbolic mode](docs/card-hyperbolic.png)
+
+**Hyperbolic.** `radar: hyperbolic` is the same lens, but you can drag it. The place under your finger stays under your finger, so pulling a street, a flight path or the coast to the middle magnifies it while everything else stays in view, compressed toward the rim. The house, its microphones and the sounds move with the map; when the house is far from the middle they shrink to a point and the sound icons fan out beside it. The rings then measure distance from the middle, not from the house, and a cross marks the middle. While you drag, the map is redrawn coarsely from tiles already loaded and sharpens when you let go. The house button returns to the house. The focus is not remembered: the card always opens on the house.
 
 **If the house is in the wrong place.** The map is centred on the location Home Assistant has for your home, which is often a house or two off. Drag the map until the cross in the middle sits on your house, then press the blue pin. That saves the spot as the house for Soundscape only (administrators only; Home Assistant's own location is not changed), and aircraft bearings and distances are measured from it from then on.
 

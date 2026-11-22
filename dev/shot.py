@@ -103,6 +103,29 @@ try:
         print("after house moved", view())
         pg.reload(); pg.wait_for_function("window.ready === true", timeout=15000)
         print("after reload (zoom remembered)", view(), "errors", errs)
+        # ---- hyperbolic: drag a place to the middle and it stays under the pointer
+        pg = b.new_page(viewport={"width": 520, "height": 760}, device_scale_factor=2)
+        errs = []
+        pg.on("pageerror", lambda e: errs.append(str(e)))
+        pg.route("**/server.arcgisonline.com/**", lambda r: r.fulfill(body=tile(sum(map(ord, r.request.url))), content_type="image/png", headers={"Access-Control-Allow-Origin": "*"}))
+        pg.goto("http://127.0.0.1:8765/dev/harness.html?theme=dark&config=" + quote(json.dumps({"radar": "hyperbolic", "map_style": "satellite", "range_mi": 6, "map_radius_ft": 200, "show_log": False, "show_spectrogram": False})))
+        pg.wait_for_function("window.ready === true", timeout=15000); pg.wait_for_timeout(1500)
+        box = pg.evaluate("(() => { const r = card.shadowRoot.querySelector('.radar').getBoundingClientRect(); return [r.x, r.y, r.width]; })()")
+        cx, cy, w = box[0] + box[2] / 2, box[1] + box[2] / 2, box[2]
+        sx, sy = cx + w * 0.30, cy - w * 0.22                      # a spot up and to the right, a few miles out
+        under = lambda x, y: pg.evaluate("([x, y]) => { const g = card._fishGround(x, y); return [Math.round(card._focus.e + g[0]), Math.round(card._focus.n + g[1])]; }", [(x - cx) / w * 200, (y - cy) / w * 200])  # noqa: E731
+        before = under(sx, sy)
+        pg.mouse.move(sx, sy); pg.mouse.down(); pg.mouse.move(cx + w * 0.15, cy - w * 0.1, steps=5); pg.mouse.move(cx, cy, steps=5)
+        pg.wait_for_timeout(150)
+        mid = pg.evaluate("card.shadowRoot.querySelector('canvas.warp').width")
+        pg.mouse.up(); pg.wait_for_timeout(1500)
+        after = under(cx, cy)
+        print("hyperbolic: grabbed ground point", before, "-> now under the middle", after, "| focus", pg.evaluate("[Math.round(card._focus.e), Math.round(card._focus.n)]"),
+              "| canvas while dragging", mid, "after", pg.evaluate("card.shadowRoot.querySelector('canvas.warp').width"), "| errors", errs)
+        pg.screenshot(path="shot-hyperbolic.png", full_page=True)
+        pg.wait_for_timeout(300); pg.evaluate("card.shadowRoot.querySelector('.recenter').click()"); pg.wait_for_timeout(600)
+        print("home button -> focus", pg.evaluate("[card._focus.e, card._focus.n]"), "errors", errs)
+
         # ---- streets on a Home Assistant without the tile proxy: straight from OpenStreetMap, saying where from
         pg = b.new_page(viewport={"width": 520, "height": 700})
         seen = []

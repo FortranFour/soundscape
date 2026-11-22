@@ -6,7 +6,8 @@
  *   type: custom:soundscape-card
  *   title: Soundscape
  *   show_radar: true
- *   radar: schematic          # or: map (true scale), fisheye (map with logarithmic distance)
+ *   radar: schematic          # or: map (true scale), fisheye (map with logarithmic distance),
+ *                             #     hyperbolic (the fisheye with a focus you can drag anywhere)
  *   aircraft: all             # or: audible (close enough to hear), heard (matched to a sound)
  *   map_style: streets        # or: satellite
  *   map_radius_m: 60          # how far the map reaches to start with (or map_radius_ft: 200)
@@ -24,7 +25,7 @@
  *   log_max: 100              # rows kept in the list
  *   log_hide: []              # kinds to leave out, e.g. [vehicle, voice]
  */
-const VERSION = '0.2.4';
+const VERSION = '0.3.0';
 
 const GROUP = {
   bird: 'life', coyote: 'life', dog: 'life', cat: 'life', voice: 'life',
@@ -63,7 +64,8 @@ const OSM_CREDIT = '© OpenStreetMap contributors';
    say, so the tiles ask for the site's address (never the full page address) to be sent after all. */
 const OSM_DIRECT = ['https://tile.openstreetmap.org/{z}/{x}/{y}.png', OSM_CREDIT, 19, 'origin'];
 
-const TILE_CACHE = new Map();   // pixel data of tiles used by the fisheye view, shared by every card on the page
+const TILE_CACHE = new Map();   // tiles being fetched for the fisheye views, shared by every card on the page
+const TILE_DATA = new Map();    // their pixels once read, for redrawing while a drag is under way
 
 /* Inferno-like ramp, as in BirdNET-Go's live spectrogram. */
 const LUT = (() => {
@@ -123,7 +125,7 @@ class SoundscapeCard extends HTMLElement {
         ] },
         { type: 'expandable', name: '', title: 'Radar and map', schema: [
           { type: 'grid', name: '', schema: [
-            { name: 'radar', selector: pick([{ value: 'schematic', label: 'Schematic (logarithmic distance)' }, { value: 'map', label: 'Map (true scale)' }, { value: 'fisheye', label: 'Fisheye map (logarithmic distance)' }]) },
+            { name: 'radar', selector: pick([{ value: 'schematic', label: 'Schematic (logarithmic distance)' }, { value: 'map', label: 'Map (true scale)' }, { value: 'fisheye', label: 'Fisheye map (logarithmic distance)' }, { value: 'hyperbolic', label: 'Hyperbolic map (fisheye, drag to refocus)' }]) },
             { name: 'aircraft', selector: pick([{ value: 'all', label: 'All nearby' }, { value: 'audible', label: 'Close enough to hear' }, { value: 'heard', label: 'Only those heard' }]) },
             { name: 'map_style', selector: pick([{ value: 'streets', label: 'Streets' }, { value: 'satellite', label: 'Satellite' }]) },
             mi ? { name: 'map_radius_ft', selector: num(60, 60000, 10, 'ft') } : { name: 'map_radius_m', selector: num(20, 20000, 10, 'm') },
@@ -157,6 +159,7 @@ class SoundscapeCard extends HTMLElement {
     this._c = { ...DEFAULTS, ...Object.fromEntries(Object.entries(config).filter(([, v]) => v !== null && v !== '')) };
     if (this._c.range_mi != null) this._c.range_km = this._c.range_mi * 1.609344;
     this._view = null;
+    this._focus = { e: 0, n: 0 };   // where the hyperbolic map is centred, metres east and north of the house
     this._mic = this._c.mic && this._c.mic !== 'auto' ? this._c.mic : null;
     this._volume = Math.min(1, Math.max(0, (Number(this._c.volume) || 0) / 100));
     this._built = false;
@@ -210,7 +213,7 @@ class SoundscapeCard extends HTMLElement {
       if (this._view) this._view.ox = this._view.oy = 0;
       this._viewSave();
       this._tiles();
-      if (this._c.radar === 'fisheye') this._fishRender();
+      if (this._isFish) this._fishRender();
       this._render();
     } else if (m.type === 'state') {
       this._state = m;
@@ -277,6 +280,8 @@ class SoundscapeCard extends HTMLElement {
     return true;
   }
 
+  get _isFish() { return this._c.radar === 'fisheye' || this._c.radar === 'hyperbolic'; }
+
   /* --------------------------------------------------------------- units */
   get _mi() { return (this._c.units === 'auto' ? this._meta?.units : this._c.units) === 'mi'; }
 
@@ -287,13 +292,13 @@ class SoundscapeCard extends HTMLElement {
 
   /* -------------------------------------------------------------- render */
   _build() {
-    const c = this._c, fish = c.radar === 'fisheye', map = c.radar === 'map' || fish;
+    const c = this._c, fish = this._isFish, map = c.radar === 'map' || fish;
     this.shadowRoot.querySelector('.root').innerHTML = `
         <div class="head"><span class="title"></span><span class="status"></span></div>
         <div class="body">
         <div class="now"></div>
         <div class="why" hidden></div>
-        ${c.show_radar ? `<div class="radar${map ? ' map' : ''}${fish ? ' fish' : ''}">${fish ? '<canvas class="warp"></canvas><div class="note" hidden></div>' : map ? '<div class="tiles"></div>' : ''}<div class="plot"></div>${map ? `<div class="credit"></div>
+        ${c.show_radar ? `<div class="radar${map ? ' map' : ''}${fish ? ' fish' : ''}${c.radar === 'hyperbolic' ? ' hyper' : ''}">${fish ? '<canvas class="warp"></canvas><div class="note" hidden></div>' : map ? '<div class="tiles"></div>' : ''}<div class="plot"></div>${map ? `<div class="credit"></div>
           <div class="mapctl"><button data-zoom="0.625" title="Zoom in">+</button><button data-zoom="1.6" title="Zoom out">&minus;</button>
             <button class="recenter" title="Back to the house and the starting zoom"><ha-icon icon="mdi:home-outline"></ha-icon></button>
             <button class="sethome" title="The house is here: save the middle of the map as the house" hidden${fish ? ' style="display:none"' : ''}><ha-icon icon="mdi:map-marker-check-outline"></ha-icon></button></div>` : ''}</div>` : ''}
@@ -322,9 +327,9 @@ class SoundscapeCard extends HTMLElement {
         if (hit('.mute')) { this._muted = !this._muted; this._listenUi(); return; }
         if (Date.now() - (this._dragged || 0) < 250) return;      // the end of a drag is not a click
         const zoom = hit('[data-zoom]');
-        if (zoom && this._c.radar === 'fisheye') { this._fishZoom(Number(zoom.dataset.zoom)); return; }
+        if (zoom && this._isFish) { this._fishZoom(Number(zoom.dataset.zoom)); return; }
         if (zoom) { this._zoom(Number(zoom.dataset.zoom)); return; }
-        if (hit('.recenter') && this._c.radar === 'fisheye') { this._fish = null; try { localStorage.removeItem('soundscape-card-fisheye'); } catch (e) { /* private mode */ } this._fishZoom(1); return; }
+        if (hit('.recenter') && this._isFish) { this._fish = null; this._focus = { e: 0, n: 0 }; try { localStorage.removeItem('soundscape-card-fisheye'); } catch (e) { /* private mode */ } this._fishZoom(1); return; }
         if (hit('.recenter')) { this._view = { radius: this._radius0(), ox: 0, oy: 0 }; this._viewChanged(); return; }
         if (hit('.sethome')) { this._setHome(); return; }
         const pill = hit('[data-mic]');
@@ -384,7 +389,7 @@ class SoundscapeCard extends HTMLElement {
     }
 
     if (this._c.show_radar && this._c.radar !== 'schematic') this._source();   // renews the street tiles' token when due
-    if (this._c.show_radar) this._set('.plot', this._c.radar === 'map' ? this._mapPlot(st) : this._c.radar === 'fisheye' ? this._fishPlot(st) : this._radar(st));
+    if (this._c.show_radar) this._set('.plot', this._c.radar === 'map' ? this._mapPlot(st) : this._isFish ? this._fishPlot(st) : this._radar(st));
     if (this._c.show_spectrogram) this._specUi(st);
     if (this._c.show_log) this._log(st);
   }
@@ -458,30 +463,48 @@ class SoundscapeCard extends HTMLElement {
   }
 
   /* Ground sounds: live ones as a wedge with an icon, ended ones as a fading icon. */
-  _sounds(st, rWedge, rIcon) {
+  _sounds(st, rWedge, rIcon, proj) {
     let s = '';
     const keep = Number(this._c.radar_recent_seconds) || 0, used = [];
+    const at = proj || polar;   // (bearing from the house, radius in drawing units) -> x, y
     const spot = (bearing, r) => { // nudge icons that would land on top of each other
       let rr = r;
       while (used.some(([b, q]) => Math.abs(((b - bearing + 540) % 360) - 180) < 22 && Math.abs(q - rr) < 14)) rr -= 15;
       used.push([bearing, rr]);
-      return polar(bearing, Math.max(14, rr));
+      let [x, y] = at(bearing, Math.max(14, rr));
+      if (proj) {   // far from the focus the house shrinks to a dot: fan the icons out beside it
+        const free = (px, py) => !placed.some(([qx, qy]) => Math.hypot(px - qx, py - qy) < 15);
+        const [ox, oy] = [x, y];
+        for (let i = 1; !free(x, y) && i < 12; i++) { const a = i * 2.4, d = 9 + i * 5; x = ox + d * Math.cos(a); y = oy + d * Math.sin(a); }
+        placed.push([x, y]);
+      }
+      return [x, y];
     };
+    const placed = [];
+    const [h0x, h0y] = at(0, 0), [i0x, i0y] = at(0, rIcon);
+    const squeezed = proj && Math.hypot(i0x - h0x, i0y - h0y) < 10;   // the house is far from the focus
     for (const e of st.active) {
       if (e.method === 'adsb') continue;
       const g = GROUP[e.cls] || 'road';
       if (e.far || e.bearing == null) {
-        s += `<circle class="far g-${g}" r="${rIcon + 6}"/>`;
+        const [hx, hy] = at(0, 0);
+        s += `<circle class="far g-${g}" cx="${hx.toFixed(1)}" cy="${hy.toFixed(1)}" r="${rIcon + 6}"/>`;
         const [x, y] = spot(315, rIcon + 6);
         s += this._sound(e, x, y, false);
         continue;
       }
-      const [x1, y1] = polar(e.bearing - 24, rWedge), [x2, y2] = polar(e.bearing + 24, rWedge);
-      s += `<path class="wedge g-${g}" d="M0 0 L${x1.toFixed(1)} ${y1.toFixed(1)} A${rWedge} ${rWedge} 0 0 1 ${x2.toFixed(1)} ${y2.toFixed(1)} Z"/>`;
+      if (proj) {   // the wedge bends with the map: trace its edge point by point
+        const pts = [at(0, 0)];
+        for (let a = -24; a <= 24; a += 6) pts.push(at(e.bearing + a, rWedge));
+        s += `<path class="wedge g-${g}" d="M${pts.map(([x, y]) => `${x.toFixed(1)} ${y.toFixed(1)}`).join(' L')} Z"/>`;
+      } else {
+        const [x1, y1] = polar(e.bearing - 24, rWedge), [x2, y2] = polar(e.bearing + 24, rWedge);
+        s += `<path class="wedge g-${g}" d="M0 0 L${x1.toFixed(1)} ${y1.toFixed(1)} A${rWedge} ${rWedge} 0 0 1 ${x2.toFixed(1)} ${y2.toFixed(1)} Z"/>`;
+      }
       const [x, y] = spot(e.bearing, rIcon);
       s += this._sound(e, x, y, false);
     }
-    if (keep) {
+    if (keep && !squeezed) {
       for (const e of st.recent) {
         if (st.now - (e.end || 0) > keep) break;
         if (e.method === 'adsb' || e.far || e.bearing == null) continue;
@@ -494,7 +517,9 @@ class SoundscapeCard extends HTMLElement {
 
   _mics(st, place) {
     let s = '';
-    const spread = Math.max(0, ...st.mics.map((m) => Math.hypot(...place(m).slice(0, 2))));
+    const spots = st.mics.map((m) => place(m)), n = spots.length || 1;
+    const mx = spots.reduce((t, q) => t + q[0], 0) / n, my = spots.reduce((t, q) => t + q[1], 0) / n;
+    const spread = n < 2 ? 99 : Math.max(0, ...spots.map((q) => Math.hypot(q[0] - mx, q[1] - my))) * 2;
     for (const m of st.mics) {
       const [x, y, lx, ly] = place(m);
       if (spread < 9) continue;   // zoomed out so far that they all sit on the house
@@ -647,7 +672,7 @@ class SoundscapeCard extends HTMLElement {
         this._street = { at: Date.now(), src };
         this._streetBusy = false;
         this._tiles();
-        if (first && this._c.radar === 'fisheye') this._fishRender();
+        if (first && this._isFish) this._fishRender();
       });
     }
     return this._street?.src || null;
@@ -744,10 +769,55 @@ class SoundscapeCard extends HTMLElement {
     this._fishTimer = setTimeout(() => this._fishRender(), 150);
   }
 
+  /* Metres from the focus for a point of the drawing (x right, y down, rim at 98). */
+  _fishGround(x, y) {
+    const f = this._fishGet(), r = Math.hypot(x, y);
+    if (r < 1e-6) return [0, 0];
+    const d = f.c * (Math.exp(f.k * Math.min(1, r / 98)) - 1);
+    return [d * x / r, -d * y / r];
+  }
+
+  /* The drawing position of a point given in metres east and north of the house. */
+  _fishPoint(east, north) {
+    const de = east - this._focus.e, dn = north - this._focus.n, d = Math.hypot(de, dn);
+    if (d < 1e-6) return [0, 0, 0];
+    const u = this._fishU(d), r = 98 * Math.min(u, 1);
+    return [r * de / d, -r * dn / d, u];
+  }
+
   _fishSetup(el) {
     this._fishRo = this._fishRo || new ResizeObserver(() => { clearTimeout(this._fishTimer); this._fishTimer = setTimeout(() => this._fishRender(), 200); });
     this._fishRo.observe(el);
     el.addEventListener('wheel', (e) => { e.preventDefault(); this._fishZoom(e.deltaY > 0 ? 1.25 : 0.8); }, { passive: false });
+    if (this._c.radar !== 'hyperbolic') return;
+    /* Drag: the place under the finger stays under the finger, so pulling a spot to the middle magnifies it. */
+    let grab = null, moved = false, frame = 0;
+    const here = (e) => { const b = el.getBoundingClientRect(); return [((e.clientX - b.left) / b.width - 0.5) * 200, ((e.clientY - b.top) / b.height - 0.5) * 200]; };
+    el.addEventListener('pointerdown', (e) => {
+      if (e.target.closest('.mapctl')) return;
+      const [x, y] = here(e), [ge, gn] = this._fishGround(x, y);
+      grab = { e: this._focus.e + ge, n: this._focus.n + gn, x, y };
+      moved = false;
+    });
+    el.addEventListener('pointermove', (e) => {
+      if (!grab) return;
+      const [x, y] = here(e);
+      if (!moved && Math.hypot(x - grab.x, y - grab.y) < 2.5) return;
+      if (!moved) { moved = true; el.setPointerCapture?.(e.pointerId); el.classList.add('dragging'); }
+      const [ge, gn] = this._fishGround(x, y);
+      const limit = this._fishGet().range * 1.5;
+      this._focus = { e: Math.max(-limit, Math.min(limit, grab.e - ge)), n: Math.max(-limit, Math.min(limit, grab.n - gn)) };
+      if (!frame) frame = requestAnimationFrame(() => { frame = 0; delete this._sig['.plot']; if (this._state) this._render(); this._fishRender(true); });
+    });
+    const end = () => {
+      if (!grab) return;
+      grab = null;
+      el.classList.remove('dragging');
+      if (moved) { this._dragged = Date.now(); delete this._sig['.plot']; if (this._state) this._render(); this._fishRender(); }
+      moved = false;
+    };
+    el.addEventListener('pointerup', end);
+    el.addEventListener('pointercancel', end);
   }
 
   _tile(z, x, y, url, referrer) {
@@ -763,18 +833,22 @@ class SoundscapeCard extends HTMLElement {
             cv.width = cv.height = 256;
             const ctx = cv.getContext('2d', { willReadFrequently: true });
             ctx.drawImage(img, 0, 0, 256, 256);
-            resolve(ctx.getImageData(0, 0, 256, 256).data);
+            const data = ctx.getImageData(0, 0, 256, 256).data;
+            TILE_DATA.set(key, data);
+            if (TILE_DATA.size > 220) TILE_DATA.delete(TILE_DATA.keys().next().value);
+            resolve(data);
           } catch (e) { resolve(null); }
         };
         img.onerror = () => resolve(null);
         img.src = url.replace('{z}', z).replace('{x}', x).replace('{y}', y);
       }));
-      if (TILE_CACHE.size > 160) TILE_CACHE.delete(TILE_CACHE.keys().next().value);
+      if (TILE_CACHE.size > 220) TILE_CACHE.delete(TILE_CACHE.keys().next().value);
     }
     return TILE_CACHE.get(key);
   }
 
-  async _fishRender() {
+  /* preview: while dragging. Small, and drawn at once from whatever tiles are already here. */
+  async _fishRender(preview) {
     const cv = this.shadowRoot?.querySelector('canvas.warp'), m = this._meta;
     if (!cv || !m || m.lat == null || !cv.clientWidth) return;
     const f = this._fishGet(), src = this._source();
@@ -782,7 +856,8 @@ class SoundscapeCard extends HTMLElement {
     const [url, credit, maxZoom, referrer] = src;
     const run = this._fishRun = (this._fishRun || 0) + 1;
     this.shadowRoot.querySelector('.credit').textContent = credit;
-    const S = Math.min(760, Math.round(cv.clientWidth * Math.min(2, window.devicePixelRatio || 1))), half = S / 2;
+    const S = preview ? 280 : Math.min(760, Math.round(cv.clientWidth * Math.min(2, window.devicePixelRatio || 1))), half = S / 2;
+    const fe = this._focus.e, fn = this._focus.n, stem = url.split('?')[0];
     const cosLat = Math.cos(m.lat * Math.PI / 180), M0 = 156543.03392 * cosLat;
     const STEPS = 512, zoomAt = new Uint8Array(STEPS + 1), distAt = new Float64Array(STEPS + 1);
     for (let i = 0; i <= STEPS; i++) {
@@ -792,7 +867,7 @@ class SoundscapeCard extends HTMLElement {
       zoomAt[i] = Math.max(2, Math.min(maxZoom, Math.ceil(Math.log2(M0 / perPixel))));
     }
     const world = (east, north, z) => {
-      const lat = m.lat + north / 111320, lon = m.lon + east / (111320 * cosLat), n = 2 ** z * 256;
+      const lat = m.lat + (fn + north) / 111320, lon = m.lon + (fe + east) / (111320 * cosLat), n = 2 ** z * 256;
       return [(lon + 180) / 360 * n, (0.5 - Math.log(Math.tan(Math.PI / 4 + lat * Math.PI / 360)) / (2 * Math.PI)) * n, n / 256];
     };
     /* which tiles: walk rays out from the house */
@@ -806,11 +881,13 @@ class SoundscapeCard extends HTMLElement {
       }
     }
     const keys = [...need.keys()];
-    const loaded = await Promise.all([...need.values()].map(([z, x, y]) => this._tile(z, x, y, url, referrer)));
+    const pending = [...need.values()].map(([z, x, y]) => this._tile(z, x, y, url, referrer));
+    const loaded = preview ? keys.map((key) => TILE_DATA.get(`${stem}|${key}`) || null) : await Promise.all(pending);
     if (run !== this._fishRun) return;                                  // a newer render has started
     const tiles = new Map(keys.map((key, i) => [key, loaded[i]]));
     const note = this.shadowRoot.querySelector('.note');
     const got = loaded.filter(Boolean).length;
+    if (preview && !got) return;
     note.hidden = got > 0;
     if (!got) { note.textContent = 'This map source does not let its tiles be redrawn, so the fisheye view cannot use it. Try the other map style, or the true-scale map.'; return; }
     cv.width = cv.height = S;
@@ -834,12 +911,14 @@ class SoundscapeCard extends HTMLElement {
   }
 
   _fishPlot(st) {
-    const R = 98, f = this._fishGet(), mi = this._mi, r = (metres) => R * this._fishU(metres);
-    if (this._fishDrawn !== `${f.range}|${this._meta.lat}|${this._meta.lon}|${this._c.map_style}`) {
-      this._fishDrawn = `${f.range}|${this._meta.lat}|${this._meta.lon}|${this._c.map_style}`;
-      this._fishRender();
-    }
-    let s = `<svg viewBox="-100 -100 200 200" role="img" aria-label="Where sounds are coming from, on a fisheye map">`;
+    const R = 98, f = this._fishGet(), mi = this._mi, hyper = this._c.radar === 'hyperbolic';
+    const key = `${f.range}|${this._meta.lat}|${this._meta.lon}|${this._c.map_style}`;
+    if (this._fishDrawn !== key) { this._fishDrawn = key; this._fishRender(); }
+    const rad = Math.PI / 180;
+    const P = (bearing, metres) => this._fishPoint(metres * Math.sin(bearing * rad), metres * Math.cos(bearing * rad));
+    const metresAt = (units) => f.c * (Math.exp(f.k * Math.min(1, units / R)) - 1);   // what a radius means at the house
+    const moved = Math.hypot(this._focus.e, this._focus.n) > 1;
+    let s = `<svg viewBox="-100 -100 200 200" role="img" aria-label="Where sounds are coming from, on a ${hyper ? 'hyperbolic' : 'fisheye'} map">`;
     s += `<circle class="rim" r="${R}"/>`;
     const marks = mi ? [[60.96, '200 ft'], [402.3, '¼ mi'], [1609.3, '1 mi'], [4828, '3 mi'], [16093, '10 mi'], [48280, '30 mi']]
       : [[50, '50 m'], [250, '250 m'], [1000, '1 km'], [3000, '3 km'], [10000, '10 km'], [30000, '30 km']];
@@ -850,15 +929,22 @@ class SoundscapeCard extends HTMLElement {
     }
     s += `<text class="rl" x="2" y="${-R + 6}">${this._dist(f.range / 1000)}</text>`;
     const far = Math.max(1, ...st.mics.map((m) => m.distance));
-    const rIcon = Math.min(60, Math.max(22, r(far + 15)));
-    s += this._sounds(st, rIcon + 16, rIcon);
-    s += `<circle class="home" r="2.4"/>`;
-    s += this._mics(st, (m) => [...polar(m.bearing, r(m.distance)), ...polar(m.bearing, r(m.distance) + 6)]);
+    const rIcon = Math.min(60, Math.max(22, R * this._fishU(far + 15)));
+    /* Sounds are placed by bearing from the house; once the focus has moved, each point goes through the lens. */
+    s += this._sounds(st, rIcon + 16, rIcon, moved ? (b, units) => P(b, metresAt(units)).slice(0, 2) : undefined);
+    const [hx, hy] = this._fishPoint(0, 0);
+    s += `<circle class="home" cx="${hx.toFixed(1)}" cy="${hy.toFixed(1)}" r="2.4"/>`;
+    s += this._mics(st, (m) => {
+      const [x, y] = P(m.bearing, m.distance), len = Math.hypot(x - hx, y - hy) || 1;
+      return [x, y, x + (x - hx) / len * 6, y + (y - hy) / len * 6];
+    });
+    if (moved) s += '<path class="cross" d="M-4 0 H4 M0 -4 V4"/>';
     const hot = this._hot(st);
     for (const a of this._planes(st, hot)) {
-      const on = hot.has(a.hex), u = this._fishU((on ? a.heard_km : a.km) * 1000);
+      const on = hot.has(a.hex);
+      let [x, y, u] = P(on ? a.heard_bearing : a.bearing, (on ? a.heard_km : a.km) * 1000);
       if (u > 1.08 && !on && a.audible < 0.25) continue;
-      const [x, y] = polar(on ? a.heard_bearing : a.bearing, R * Math.min(u, 0.93));
+      if (u > 0.93) { x *= 0.93 / Math.min(u, 1); y *= 0.93 / Math.min(u, 1); }
       s += this._plane(a, x, y, on, u > 0.93 ? 'far' : on || a.audible >= 0.25);
     }
     s += `<g class="north" transform="translate(90 -86)"><path d="M0 -8 L4 4 L0 1.5 L-4 4 Z"/><text y="12">N</text></g>`;
@@ -1039,6 +1125,7 @@ const STYLE = `
   .mapctl .sethome { background: #1e88e5; color: #fff; }
   .cross { stroke: #fff; stroke-width: .8; fill: none; filter: drop-shadow(0 0 1px #000); }
   .radar.fish { background: none; border-radius: 0; overflow: visible; touch-action: auto; cursor: default; }
+  .radar.hyper { touch-action: none; cursor: grab; } .radar.hyper.dragging { cursor: grabbing; }
   .radar.fish canvas.warp { position: absolute; inset: 1%; width: 98%; height: 98%; border-radius: 50%; background: #2a2d31; }
   .radar.fish .ring { stroke: rgba(255,255,255,.5); stroke-width: .5; }
   .radar.fish .rim { fill: none; stroke: var(--divider-color); stroke-width: .8; }
