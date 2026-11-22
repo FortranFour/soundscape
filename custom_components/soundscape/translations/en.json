@@ -97,15 +97,6 @@
     }
   },
   "selector": {
-    "adsb": {
-      "options": {
-        "adsb.fi": "adsb.fi",
-        "adsb.lol": "adsb.lol",
-        "airplanes.live": "airplanes.live",
-        "custom": "My own receiver",
-        "off": "Off"
-      }
-    },
     "units": {
       "options": {
         "auto": "Automatic",

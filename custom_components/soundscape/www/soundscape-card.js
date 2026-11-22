@@ -24,7 +24,7 @@
  *   log_max: 100              # rows kept in the list
  *   log_hide: []              # kinds to leave out, e.g. [vehicle, voice]
  */
-const VERSION = '0.2.2';
+const VERSION = '0.2.3';
 
 const GROUP = {
   bird: 'life', coyote: 'life', dog: 'life', cat: 'life', voice: 'life',
@@ -153,6 +153,7 @@ class SoundscapeCard extends HTMLElement {
   }
 
   setConfig(config) {
+    this._config = config;   // card-mod and UIX look here for their own keys
     this._c = { ...DEFAULTS, ...Object.fromEntries(Object.entries(config).filter(([, v]) => v !== null && v !== '')) };
     if (this._c.range_mi != null) this._c.range_km = this._c.range_mi * 1.609344;
     this._view = null;
@@ -285,7 +286,7 @@ class SoundscapeCard extends HTMLElement {
     this.shadowRoot.innerHTML = `
       <style>${STYLE}</style>
       <ha-card>
-        <div class="status${c.title ? '' : ' bare'}"></div>
+        <div class="head"><span class="title"></span><span class="status"></span></div>
         <div class="body">
         <div class="now"></div>
         <div class="why" hidden></div>
@@ -310,7 +311,7 @@ class SoundscapeCard extends HTMLElement {
         </div>
       </ha-card>`;
     const root = this.shadowRoot;
-    root.querySelector('ha-card').header = c.title || undefined;   // the stock card header, so it follows the theme
+    root.querySelector('.title').textContent = c.title || '';
     if (!this._wired) {
       this._wired = true;
       root.addEventListener('click', (e) => {
@@ -945,8 +946,12 @@ const STYLE = `
   :host { --life: #43a047; --road: #78909c; --alert: #e53935; --air: #1e88e5; }
   ha-card { overflow: hidden; position: relative; }
   .body { padding: 0 16px 16px; }
-  .status { position: absolute; top: 12px; right: 16px; line-height: var(--ha-line-height-expanded, 48px); font-size: 12px; color: var(--secondary-text-color); }
-  .status.bare { position: static; text-align: right; line-height: 28px; padding: 4px 16px 0; }
+  /* A plain 20 px medium title. Each part can be restyled from a theme or card-mod with the variables. */
+  .head { display: flex; align-items: baseline; gap: 12px; padding: var(--soundscape-title-padding, 14px 16px 6px); }
+  .title { flex: 1; font-size: var(--soundscape-title-font-size, 20px); font-weight: var(--soundscape-title-font-weight, 500);
+    line-height: var(--soundscape-title-line-height, 28px); color: var(--soundscape-title-color, var(--primary-text-color)); }
+  .status { font-size: 12px; color: var(--secondary-text-color); }
+  .body { padding-top: 6px; }
   .status.bad { color: var(--warning-color, #f9a825); }
   .empty, .none, .quiet { color: var(--secondary-text-color); font-size: 14px; padding: 6px 0; }
   .quiet { padding: 9px 0; }

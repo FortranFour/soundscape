@@ -70,6 +70,8 @@ log_max: 100
 log_hide: []
 ```
 
+The title is a 20 px medium heading. To change it, set any of `--soundscape-title-font-size`, `--soundscape-title-font-weight`, `--soundscape-title-line-height`, `--soundscape-title-color` and `--soundscape-title-padding` in your theme or with card-mod.
+
 Everything is also in the card's visual editor, which shows each option's default beneath it. A card added from the picker gets every option written out at its default. Where Home Assistant is set to US customary units the editor offers `map_radius_ft` and `range_mi` in place of the metric pair; either pair works anywhere.
 
 | Option | Default | |

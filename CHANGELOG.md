@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.3
+
+- Title is a plain 20 px medium heading, the size commonly used for card titles built with button-card, instead of the larger stock header. Its size, weight, line height, colour and padding can be set with `--soundscape-title-*` variables.
+- card-mod and UIX styles on the card now apply; the card was keeping its configuration where they could not find it.
+- Validation: the names of the aircraft sources are no longer translation keys, which may not contain a dot.
+
 ## 0.2.2
 
 - Street maps now come from CARTO, as Home Assistant's own map does. OpenStreetMap's servers refuse requests without a page address, and Home Assistant stops the browser from sending one, so they could never have loaded.

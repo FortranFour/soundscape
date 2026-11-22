@@ -34,8 +34,10 @@ def _sources_schema(d: dict, miles: bool) -> vol.Schema:
         vol.Optional(CONF_FRIGATE_URL, description={"suggested_value": d.get(CONF_FRIGATE_URL, "")}): text,
         vol.Optional(CONF_BIRDNET_URL, description={"suggested_value": d.get(CONF_BIRDNET_URL, "")}): text,
         vol.Required(CONF_ADSB, default=d.get(CONF_ADSB, "adsb.fi")): sel.SelectSelector(
-            sel.SelectSelectorConfig(options=[*ADSB_PROVIDERS, "custom", "off"],
-                                     mode=sel.SelectSelectorMode.DROPDOWN, translation_key="adsb")),
+            sel.SelectSelectorConfig(mode=sel.SelectSelectorMode.DROPDOWN, options=[
+                *(sel.SelectOptionDict(value=k, label=k) for k in ADSB_PROVIDERS),
+                sel.SelectOptionDict(value="custom", label="My own receiver"),
+                sel.SelectOptionDict(value="off", label="Off")])),
         vol.Optional(CONF_ADSB_URL, description={"suggested_value": d.get(CONF_ADSB_URL, "")}): text,
         vol.Required(CONF_ADSB_RADIUS, default=round(reach / MI) if miles else round(reach)): sel.NumberSelector(
             sel.NumberSelectorConfig(min=2, max=60, step=1, unit_of_measurement="mi" if miles else "km",
