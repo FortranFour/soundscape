@@ -32,9 +32,14 @@
   const init = await (await fetch('./fixture.json')).json();
   await import('../custom_components/soundscape/www/soundscape-card.js');
   const card = document.createElement('soundscape-card');
-  card.setConfig({ title: 'Soundscape', ...(q.get('mic') ? { mic: q.get('mic') } : {}) });
+  card.setConfig({ title: 'Soundscape', ...JSON.parse(q.get('config') || '{}') });
   document.body.append(card);
-  card.hass = { connection: { subscribeMessage: async (cb) => { cb(init); window.feed = cb; return () => {}; } } };
+  window.card = card; window.calls = [];
+  card.hass = { connection: { subscribeMessage: async (cb, msg) => {
+    window.calls.push(msg.type + (msg.mic ? ':' + msg.mic : ''));
+    if (msg.type === 'soundscape/listen') { window.pcm = cb; return () => window.calls.push('stop:' + msg.mic); }
+    cb(init); window.feed = cb; return () => {};
+  } } };
   if (q.get('open')) { card._open = String(init.active.find((e) => e.cls === q.get('open'))?.id); card._render(); }
   window.ready = true;
 </script>

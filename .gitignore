@@ -4,3 +4,4 @@ __pycache__/
 dev/shot-*.png
 dev/package*.json
 .pytest_cache/
+dev/fixture.json

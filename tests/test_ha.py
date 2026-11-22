@@ -48,18 +48,18 @@ async def test_flow_capture_and_feed(hass, hass_ws_client, tmp_path, socket_enab
     result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": "user"})
     assert result["step_id"] == "user"
     result = await hass.config_entries.flow.async_configure(
-        result["flow_id"], {"adsb_provider": "off", "adsb_radius_km": 15, "dispatch": "off"})
+        result["flow_id"], {"adsb_provider": "off", "adsb_radius_km": 15, "dispatch": "off", "units": "imperial"})
     assert result["step_id"] == "cameras", result
     result = await hass.config_entries.flow.async_configure(result["flow_id"], {
         "cameras": [], "stream_template": "rtsp://{host}:8554/{camera}", "ignore": [],
         "stream_overrides": f"front={tmp_path}/front.wav\nbackyard={tmp_path}/backyard.wav"})
     assert result["step_id"] == "geometry", result
     result = await hass.config_entries.flow.async_configure(result["flow_id"], {
-        "front bearing": 180, "front distance": 8, "backyard bearing": 0, "backyard distance": 12})
+        "front bearing": 180, "front distance": 26, "backyard bearing": 0, "backyard distance": 40})  # feet
     assert result["type"] == "create_entry"
     entry = result["result"]
     await hass.async_block_till_done()
-    assert entry.options["geometry"] == {"front": [180, 8], "backyard": [0, 12]}
+    assert entry.options["geometry"] == {"front": [180, 7.92], "backyard": [0, 12.19]}  # stored in metres
     assert hass.states.get("binary_sensor.soundscape_siren").state == "off"
     assert hass.states.get("sensor.soundscape_now_hearing").state == "Quiet"
 
@@ -70,14 +70,27 @@ async def test_flow_capture_and_feed(hass, hass_ws_client, tmp_path, socket_enab
     assert (await ws.receive_json())["success"]
     init = (await ws.receive_json())["event"]
     assert init["type"] == "init" and init["meta"]["bands"] == 96
+    assert init["meta"]["units"] == "mi" and init["meta"]["rate"] == 24000
+
+    # live audio: nothing flows until asked for, then 16-bit PCM for that microphone
+    await ws.send_json({"id": 6, "type": "soundscape/listen", "mic": "front"})
+    pcm = 0
     assert {m["id"] for m in init["mics"]} == {"front", "backyard"}
 
     cols, states = {"front": 0, "backyard": 0}, []
     try:
         async with asyncio.timeout(bed + sec + 8):
             while "siren" not in [f["cls"] for f in fired]:
-                ev = (await ws.receive_json())["event"]
-                if ev["type"] == "spec":
+                msg = await ws.receive_json()
+                if msg["type"] == "result":
+                    continue
+                ev = msg["event"]
+                if ev["type"] == "pcm":
+                    assert msg["id"] == 6 and ev["mic"] == "front"
+                    pcm += len(base64.b64decode(ev["data"]))
+                    if pcm > 24000 * 2 * 3:
+                        await ws.send_json({"id": 7, "type": "unsubscribe_events", "subscription": 6})
+                elif ev["type"] == "spec":
                     assert len(base64.b64decode(ev["data"])) == ev["n"] * 96
                     cols[ev["mic"]] += ev["n"]
                 else:
@@ -89,6 +102,8 @@ async def test_flow_capture_and_feed(hass, hass_ws_client, tmp_path, socket_enab
     assert starts["dog"]["mic"] == "front"
     assert starts["siren"]["mic"] == "front" and 150 <= starts["siren"]["bearing"] <= 210
     assert min(cols.values()) > 11 * (bed + 3)
+    assert 24000 * 2 * 3 < pcm < 24000 * 2 * 6      # about three seconds arrived, then it stopped
+    assert hass.data["soundscape"].captures["front"].on_pcm is None
     assert hass.states.get("binary_sensor.soundscape_siren").state == "on"
     assert hass.states.get("sensor.soundscape_now_hearing").state == "Siren"
     assert all(m["ok"] for m in states[-1]["mics"])

@@ -34,7 +34,7 @@ for n, (name, _, _) in enumerate(MICS):
     place(x, 20, synth.passby(8, db=-30 + (0 if name == "Driveway" else -12), seed=n))
     audio[name] = synth.pcm(x)
 
-fu = fusion.Fusion([fusion.Mic(n, n.replace("_", " ").capitalize(), b, d) for n, b, d in MICS], *HOME)
+fu = fusion.Fusion([fusion.Mic(n, n.replace("_", " ").capitalize(), b, d) for n, b, d in MICS], *HOME, imperial=True)
 an = {n: dsp.Analyzer(SR) for n, _, _ in MICS}
 cols = {n: bytearray() for n, _, _ in MICS}
 types = {"V22": ["BELL-BOEING V-22 Osprey", "R2T", "M"], "B738": ["BOEING 737-800", "L2J", "M"],
@@ -84,15 +84,35 @@ now = T0 + SEC - 1
 for e in [*fu.active.values(), *fu.history]:
     if e.cls == "siren":
         e.extra["dispatch"] = [{"type": "Medical", "address": "EXAMPLE DR", "cross": "SAMPLE WAY", "units": "E9, M9",
-                                "time": time.strftime("%Y-%m-%dT%H:%M:00-08:00", time.localtime(e.start)), "km": 1.4}]
+                                "time": time.strftime("%Y-%m-%dT%H:%M:00-08:00", time.localtime(e.start)), "km": 1.4,
+                                "exact": False, "agency": "San Diego Fire-Rescue"}]
         e.evidence.append("Dispatch: Medical, EXAMPLE DR (E9, M9), about 1.4 km")
+import random
+random.seed(4)
+OLD = [("bird", "House Finch", "Backyard"), ("vehicle", None, "Driveway"), ("bird", "Anna's Hummingbird", "Backyard"),
+       ("dog", None, "Front_door"), ("jet", None, None), ("bird", "California Towhee", "Bedroom_windows"),
+       ("voice", None, "Front"), ("vehicle", None, "Driveway"), ("helicopter", None, None), ("coyote", None, "Backyard"),
+       ("bird", "Common Raven", "Front"), ("car_alarm", None, "Driveway"), ("propeller", None, None),
+       ("bird", "Lesser Goldfinch", "Backyard"), ("vehicle", None, "Front"), ("siren", None, "Front"),
+       ("bird", "Red-breasted Nuthatch", "Bedroom_windows"), ("glass", None, "Driveway")]
+t = T0 - 60
+for n, (cls, label, mic) in enumerate(OLD):
+    t -= random.uniform(90, 900)
+    e = fusion.Event(900 + n, cls, cls, label or fusion.CLASSES[cls][0], t, t + random.uniform(3, 40),
+                     conf=random.uniform(0.55, 0.97))
+    e.end, e.mic = e.last, mic
+    e.far = mic is None
+    e.bearing = None if mic is None else fu.mics[mic].bearing
+    e.evidence = ["Example entry"]
+    fu.history.append(e)
 ref = an["Front"]
 snap = fu.snapshot(now)
 for m in snap["mics"]:
     m["error"] = None
 init = {"type": "init", "meta": {"bands": dsp.N_BANDS, "edges": [round(float(x), 1) for x in ref.band_edges],
                                   "cols_per_s": ref.cols_per_s, "db_min": dsp.DB_MIN, "db_max": dsp.DB_MAX,
-                                  "backlog_s": 90, "version": "dev"},
+                                  "backlog_s": 90, "version": "dev", "rate": SR,
+                                  "units": "mi", "lat": HOME[0], "lon": HOME[1]},
         "backlog": {n: base64.b64encode(bytes(c[-int(90 * ref.cols_per_s) * dsp.N_BANDS:])).decode() for n, c in cols.items()},
         "status": {}, **snap}
 (ROOT / "dev/fixture.json").write_text(json.dumps(init))

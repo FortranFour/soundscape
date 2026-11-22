@@ -10,13 +10,15 @@
           "adsb_provider": "Aircraft positions (ADS-B)",
           "adsb_url": "Your own ADS-B address",
           "adsb_radius_km": "Look for aircraft within",
-          "dispatch": "Emergency dispatch feed"
+          "dispatch": "Emergency dispatch list",
+          "units": "Distances"
         },
         "data_description": {
           "frigate_url": "Used to list cameras and reach their audio, e.g. http://ccab4aaf-frigate-fa:5000",
           "birdnet_url": "For bird species, e.g. http://db21ed7f-birdnet-go:8080",
-          "adsb_url": "Only for 'My own receiver': a tar1090 aircraft.json address, or any readsb-style address with {lat} {lon} {nm}",
-          "dispatch": "Looked at only after a siren has been heard"
+          "adsb_url": "Only for 'My own receiver': a tar1090 aircraft.json address, or a readsb-style address with lat, lon and nm placeholders, each in curly braces.",
+          "dispatch": "Consulted only after a siren has been heard. Twelve agencies are built in.",
+          "units": "Automatic follows Home Assistant's unit system: miles and feet for US customary, kilometres and metres otherwise."
         }
       },
       "cameras": {
@@ -28,7 +30,7 @@
           "ignore": "Kinds of sound to leave out"
         },
         "data_description": {
-          "stream_template": "{host} is Frigate's host, {camera} the camera's restream name",
+          "stream_template": "The words host and camera in curly braces are replaced with Frigate's host and each camera's restream name. Leave as it is unless your restreams are named differently.",
           "stream_overrides": "One per line: name=address. Anything ffmpeg can open.",
           "cameras": "Each one costs an ffmpeg process decoding audio only"
         }
@@ -58,13 +60,15 @@
           "adsb_provider": "Aircraft positions (ADS-B)",
           "adsb_url": "Your own ADS-B address",
           "adsb_radius_km": "Look for aircraft within",
-          "dispatch": "Emergency dispatch feed"
+          "dispatch": "Emergency dispatch list",
+          "units": "Distances"
         },
         "data_description": {
           "frigate_url": "Used to list cameras and reach their audio, e.g. http://ccab4aaf-frigate-fa:5000",
           "birdnet_url": "For bird species, e.g. http://db21ed7f-birdnet-go:8080",
-          "adsb_url": "Only for 'My own receiver': a tar1090 aircraft.json address, or any readsb-style address with {lat} {lon} {nm}",
-          "dispatch": "Looked at only after a siren has been heard"
+          "adsb_url": "Only for 'My own receiver': a tar1090 aircraft.json address, or a readsb-style address with lat, lon and nm placeholders, each in curly braces.",
+          "dispatch": "Consulted only after a siren has been heard. Twelve agencies are built in.",
+          "units": "Automatic follows Home Assistant's unit system: miles and feet for US customary, kilometres and metres otherwise."
         }
       },
       "cameras": {
@@ -76,7 +80,7 @@
           "ignore": "Kinds of sound to leave out"
         },
         "data_description": {
-          "stream_template": "{host} is Frigate's host, {camera} the camera's restream name",
+          "stream_template": "The words host and camera in curly braces are replaced with Frigate's host and each camera's restream name. Leave as it is unless your restreams are named differently.",
           "stream_overrides": "One per line: name=address. Anything ffmpeg can open.",
           "cameras": "Each one costs an ffmpeg process decoding audio only"
         }
@@ -102,10 +106,11 @@
         "off": "Off"
       }
     },
-    "dispatch": {
+    "units": {
       "options": {
-        "off": "Off",
-        "sdfd": "San Diego Fire-Rescue"
+        "auto": "Automatic",
+        "metric": "Kilometres and metres",
+        "imperial": "Miles and feet"
       }
     }
   }

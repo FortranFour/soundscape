@@ -25,6 +25,7 @@ class Capture(threading.Thread):
         self._proc: subprocess.Popen | None = None
         self.error: str | None = None
         self.running = False
+        self.on_pcm: Callable | None = None  # set while someone is listening live
 
     def stop(self) -> None:
         self._halt.set()
@@ -57,7 +58,10 @@ class Capture(threading.Thread):
                     got += len(data)
                     if not self.running:
                         self.running, self.error = True, None
-                    cols, n, feats = analyzer.process(data[: len(data) & ~1])
+                    data = data[: len(data) & ~1]
+                    if listener := self.on_pcm:
+                        listener(self.mic, data)
+                    cols, n, feats = analyzer.process(data)
                     if n or feats:
                         self._on_audio(self.mic, cols, n, feats)
             except Exception as err:  # noqa: BLE001 - keep the thread alive

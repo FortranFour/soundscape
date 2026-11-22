@@ -7,12 +7,13 @@ from homeassistant.config_entries import ConfigEntry, ConfigFlow, OptionsFlow
 from homeassistant.core import callback
 from homeassistant.helpers import selector as sel
 
-from . import fetch_frigate_cameras, parse_overrides
+from . import fetch_frigate_cameras, parse_overrides, use_imperial
 from .const import (
     ADSB_PROVIDERS, CONF_ADSB, CONF_ADSB_RADIUS, CONF_ADSB_URL, CONF_BIRDNET_URL, CONF_CAMERAS,
     CONF_DISPATCH, CONF_FRIGATE_URL, CONF_GEOMETRY, CONF_IGNORE, CONF_OVERRIDES, CONF_TEMPLATE,
-    DEFAULT_TEMPLATE, DOMAIN,
+    CONF_UNITS, DEFAULT_TEMPLATE, DOMAIN,
 )
+from .dispatch import FEEDS
 from .fusion import CLASSES
 
 
@@ -35,9 +36,15 @@ def _sources_schema(d: dict) -> vol.Schema:
         vol.Required(CONF_ADSB_RADIUS, default=d.get(CONF_ADSB_RADIUS, 15)): sel.NumberSelector(
             sel.NumberSelectorConfig(min=3, max=60, step=1, unit_of_measurement="km",
                                      mode=sel.NumberSelectorMode.BOX)),
-        vol.Required(CONF_DISPATCH, default=d.get(CONF_DISPATCH, "off")): sel.SelectSelector(
-            sel.SelectSelectorConfig(options=["off", "sdfd"], mode=sel.SelectSelectorMode.DROPDOWN,
-                                     translation_key="dispatch")),
+        vol.Required(CONF_DISPATCH, default=d.get(CONF_DISPATCH, "auto")): sel.SelectSelector(
+            sel.SelectSelectorConfig(mode=sel.SelectSelectorMode.DROPDOWN, options=[
+                sel.SelectOptionDict(value="auto", label="Nearest, if one covers this area"),
+                sel.SelectOptionDict(value="off", label="Off"),
+                *(sel.SelectOptionDict(value=k, label=f["name"])
+                  for k, f in sorted(FEEDS.items(), key=lambda kv: kv[1]["name"]))])),
+        vol.Required(CONF_UNITS, default=d.get(CONF_UNITS, "auto")): sel.SelectSelector(
+            sel.SelectSelectorConfig(options=["auto", "metric", "imperial"],
+                                     mode=sel.SelectSelectorMode.DROPDOWN, translation_key="units")),
     })
 
 
@@ -60,23 +67,31 @@ def _mic_names(d: dict) -> list[str]:
     return list(dict.fromkeys([*d.get(CONF_CAMERAS, []), *parse_overrides(d.get(CONF_OVERRIDES, ""))]))
 
 
-def _geometry_schema(d: dict) -> vol.Schema:
+FT = 0.3048
+
+
+def _geometry_schema(d: dict, feet: bool) -> vol.Schema:
+    """Distances are stored in metres and shown in feet where the household uses feet."""
     names = _mic_names(d)
     geo = d.get(CONF_GEOMETRY) or {}
     fields = {}
     for i, name in enumerate(names):
         bearing, distance = geo.get(name) or (round(i * 360 / len(names)), 10)
+        if feet:
+            distance = round(distance / FT)
         fields[vol.Required(f"{name} bearing", default=bearing)] = sel.NumberSelector(
             sel.NumberSelectorConfig(min=0, max=359, step=1, unit_of_measurement="°",
                                      mode=sel.NumberSelectorMode.BOX))
         fields[vol.Required(f"{name} distance", default=distance)] = sel.NumberSelector(
-            sel.NumberSelectorConfig(min=0, max=200, step=0.5, unit_of_measurement="m",
+            sel.NumberSelectorConfig(min=0, max=600, step=0.5, unit_of_measurement="ft" if feet else "m",
                                      mode=sel.NumberSelectorMode.BOX))
     return vol.Schema(fields)
 
 
-def _geometry(d: dict, user_input: dict) -> dict:
-    return {n: [user_input[f"{n} bearing"], user_input[f"{n} distance"]] for n in _mic_names(d)}
+def _geometry(d: dict, user_input: dict, feet: bool) -> dict:
+    scale = FT if feet else 1.0
+    return {n: [user_input[f"{n} bearing"], round(user_input[f"{n} distance"] * scale, 2)]
+            for n in _mic_names(d)}
 
 
 class _Steps:
@@ -113,10 +128,11 @@ class _Steps:
                                     errors=errors)
 
     async def async_step_geometry(self, user_input=None):
+        feet = use_imperial(self.hass, self._d.get(CONF_UNITS))
         if user_input is not None:
-            self._d[CONF_GEOMETRY] = _geometry(self._d, user_input)
+            self._d[CONF_GEOMETRY] = _geometry(self._d, user_input, feet)
             return self._finish()
-        return self.async_show_form(step_id="geometry", data_schema=_geometry_schema(self._d))
+        return self.async_show_form(step_id="geometry", data_schema=_geometry_schema(self._d, feet))
 
 
 class SoundscapeConfigFlow(_Steps, ConfigFlow, domain=DOMAIN):

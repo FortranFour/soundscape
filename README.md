@@ -4,7 +4,7 @@ A Home Assistant integration and dashboard card that listen to the microphones i
 
 ![The card](docs/card-dark.png)
 
-It hears and locates birds (by species), coyotes, dogs, passing vehicles, sirens, car alarms, breaking glass, bangs, and aircraft, which it separates into jets, propeller aircraft, helicopters and the V-22 Osprey. The card shows what is being heard now, a radar of the property and the sky around it, a live spectrogram in the manner of BirdNET-Go's, and a log.
+It hears and locates birds (by species), coyotes, dogs, passing vehicles, sirens, car alarms, breaking glass, bangs, and aircraft, which it separates into jets, propeller aircraft, helicopters and the V-22 Osprey. The card shows what is being heard now, a radar of the property and the sky around it (schematic, or over a street or satellite map), a live spectrogram in the manner of BirdNET-Go's, a button to listen live, and a scrolling log.
 
 ## How it decides
 
@@ -17,7 +17,7 @@ No single source can name all of these, so Soundscape combines five and shows it
 | Frigate object detection | A car, truck or motorcycle moving on a camera; a dog seen at night |
 | [BirdNET-Go](https://github.com/tphakala/birdnet-go) | Bird species per microphone, including what it is hearing right now, and its coyote, dog, siren and engine classes |
 | ADS-B | Aircraft near the house with type, altitude and track. Types are classed as jet, propeller, helicopter or tiltrotor from the ICAO type designator |
-| San Diego Fire-Rescue's public incident list (optional) | After a siren, the dispatches of the same few minutes on streets near the house |
+| A public dispatch list (optional, twelve agencies built in) | After a siren, the dispatches of the same few minutes near the house |
 
 **Where.** Camera audio streams are not synchronized closely enough to time a sound's arrival at each microphone, so direction comes from loudness: each microphone's rise above its own background, weighted by where you said that microphone is. That gives a side of the house and a compass direction, not a point on a map. A sound equally loud everywhere is reported as overhead or distant. For an aircraft matched on ADS-B the position is the aircraft's own, moved back along its track by the time its sound took to arrive.
 
@@ -41,6 +41,8 @@ The audio analysis has been tested on synthesized sirens, howls, rotors and prop
    - *Frigate address* is filled in from the Frigate integration. Internally the add-on is usually `http://ccab4aaf-frigate-fa:5000`.
    - *BirdNET-Go address*: for the add-on, `http://db21ed7f-birdnet-go:8080`.
    - *Aircraft positions*: adsb.fi, adsb.lol and airplanes.live need no account. If you run your own receiver, choose it and give its `aircraft.json` address.
+   - *Emergency dispatch list*: left on "Nearest", it uses the built-in agency closest to the house if one is within 80 km. See the list below.
+   - *Distances*: automatic follows Home Assistant's unit system, miles and feet for US customary and kilometres and metres otherwise. Either can be forced.
    - Pick the cameras to listen to, then give each microphone's compass bearing and distance from the middle of the house.
 3. Add the card. The integration loads it; there is no resource to register.
 
@@ -48,14 +50,65 @@ The audio analysis has been tested on synthesized sirens, howls, rotors and prop
 type: custom:soundscape-card
 title: Soundscape
 show_radar: true
+radar: schematic
+map_style: streets
+map_radius_m: 60
+range_km: 10
+radar_recent_seconds: 120
+units: auto
 show_spectrogram: true
-show_log: true
 mic: auto
 spectrogram_height: 150
 spectrogram_seconds: 60
+show_listen: true
+volume: 80
+show_log: true
 log_rows: 8
-range_km: 10
+log_max: 100
+log_hide: []
 ```
+
+Everything is also in the card's visual editor.
+
+| Option | Default | |
+| --- | --- | --- |
+| `radar` | `schematic` | `schematic` draws distance logarithmically, so the yard and aircraft miles out share one view. `map` puts a real map behind it at true scale. |
+| `map_style` | `streets` | `streets` (OpenStreetMap) or `satellite` (Esri World Imagery). For another source set `map_tiles` to a `{z}/{x}/{y}` address and `map_attribution` to its credit line. |
+| `map_radius_m` | `60` | How far the map reaches from the house. About 60 shows the property; a few thousand shows the neighbourhood and nearby aircraft. Aircraft beyond the edge sit on it with their distance. |
+| `range_km` | `10` | Outer ring of the schematic radar. |
+| `radar_recent_seconds` | `120` | Sounds that have ended stay on the radar, faded, for this long. `0` turns that off. |
+| `units` | `auto` | `auto` follows the integration; `km` or `mi` overrides it for this card. |
+| `mic` | `auto` | Which microphone the spectrogram shows: the one hearing the most, or a camera name. |
+| `show_listen`, `volume` | `true`, `80` | The headphones button plays the shown microphone live, with mute and a volume slider. |
+| `log_rows` | `8` | Rows visible before the list scrolls. |
+| `log_max` | `100` | Rows kept in the list (the integration holds the last 150 sounds). |
+| `log_hide` | `[]` | Kinds to leave out of the list, for example `[vehicle, voice]`. |
+
+![Map mode](docs/card-map.png)
+
+On the radar each aircraft is drawn by kind (jet, propeller, helicopter, Osprey) pointing along its track, and each sound on the ground carries its own icon and name. The filter chips above the list narrow it to wildlife and people, road and yard, alerts, or aircraft.
+
+Two things to know about privacy. In map mode the browser fetches map tiles for the house's location from the map provider, as any map does. Live listening sends that camera's audio to the browser of whoever pressed the button, and only while it is pressed; any Home Assistant user who can see the card can do so.
+
+### Dispatch lists
+
+| Agency | Location given as |
+| --- | --- |
+| San Diego Fire-Rescue | street and cross street |
+| Seattle Fire | coordinates |
+| San Francisco law enforcement (about 10 to 20 minutes behind) | intersection |
+| Ventura County Fire | coordinates |
+| Phoenix Fire (regional) | coordinates |
+| Austin and Travis County Fire | coordinates |
+| Dallas Police | block and street |
+| Houston Fire and Police | street and cross street |
+| Tulsa Fire | coordinates |
+| Nashville Fire | ZIP code only |
+| Orlando Police | block and street |
+| Richmond, Virginia Police and Fire | block and street |
+
+Each was publishing live when it was added, in November 2026. Where a feed gives a street instead of coordinates, the street is looked up once inside a box around the house, so the distance shown is approximate and says so. Los Angeles city and county publish no open real-time list; theirs is on PulsePoint, which has no public interface. Several other large cities (New York, Chicago, Boston, Washington) publish nothing in real time, and a few that do were left out because the feed was stale or forbids automated reading. Adding an agency is one entry and one small parser in `dispatch.py`.
+
 
 Audio is read from Frigate's go2rtc restream (`rtsp://<frigate>:8554/<camera>`), one audio-only ffmpeg process per camera. If a camera's restream has another name, or a microphone is not a Frigate camera, add a line `name=address` under *Other microphones*.
 
@@ -109,4 +162,4 @@ python dev/make_fixture.py && python dev/shot.py   # render the card from synthe
 
 ## Credits
 
-The spectrogram follows the look of [BirdNET-Go](https://github.com/tphakala/birdnet-go) by Tomi P. Hakala, which also supplies the bird identifications. Sound and object labels come from [Frigate](https://frigate.video). Aircraft positions come from the community ADS-B networks, and type data from [tar1090-db](https://github.com/wiedehopf/tar1090-db). Street lookups use OpenStreetMap's Nominatim. MIT licensed.
+The spectrogram follows the look of [BirdNET-Go](https://github.com/tphakala/birdnet-go) by Tomi P. Hakala, which also supplies the bird identifications. Sound and object labels come from [Frigate](https://frigate.video). Maps are OpenStreetMap or Esri World Imagery. Aircraft positions come from the community ADS-B networks, and type data from [tar1090-db](https://github.com/wiedehopf/tar1090-db). Street lookups use OpenStreetMap's Nominatim. MIT licensed.

@@ -1,6 +1,6 @@
 """Constants for Soundscape."""
 DOMAIN = "soundscape"
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 EVENT = "soundscape_event"
 
 CONF_FRIGATE_URL = "frigate_url"
@@ -14,6 +14,7 @@ CONF_ADSB_RADIUS = "adsb_radius_km"
 CONF_DISPATCH = "dispatch"
 CONF_IGNORE = "ignore"
 CONF_GEOMETRY = "geometry"
+CONF_UNITS = "units"
 
 DEFAULT_TEMPLATE = "rtsp://{host}:8554/{camera}"
 SAMPLE_RATE = 24000
@@ -24,7 +25,6 @@ ADSB_PROVIDERS = {
     "airplanes.live": "https://api.airplanes.live/v2/point/{lat}/{lon}/{nm}",
 }
 TYPES_URL = "https://raw.githubusercontent.com/wiedehopf/tar1090-db/master/db/icao_aircraft_types2.js"
-SDFD_URL = "https://webapps.sandiego.gov/sdfiredispatch/api/v1/Incidents"
 NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
 USER_AGENT = f"HomeAssistant-Soundscape/{VERSION} (+https://github.com/FortranFour/soundscape)"
 

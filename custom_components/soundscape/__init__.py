@@ -25,22 +25,31 @@ from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.event import async_track_state_change_event, async_track_time_interval
 from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util, slugify
+from homeassistant.util.unit_system import US_CUSTOMARY_SYSTEM
 
 from .capture import Capture
 from .const import (
     CONF_ADSB, CONF_ADSB_RADIUS, CONF_ADSB_URL, CONF_BIRDNET_URL, CONF_CAMERAS, CONF_DISPATCH,
-    CONF_FRIGATE_URL, CONF_GEOMETRY, CONF_IGNORE, CONF_OVERRIDES, CONF_TEMPLATE, DEFAULT_TEMPLATE,
-    DOMAIN, EVENT, SAMPLE_RATE, VERSION,
+    CONF_FRIGATE_URL, CONF_GEOMETRY, CONF_IGNORE, CONF_OVERRIDES, CONF_TEMPLATE, CONF_UNITS,
+    DEFAULT_TEMPLATE, DOMAIN, EVENT, SAMPLE_RATE, VERSION,
 )
+from .dispatch import Dispatch, resolve_feed
 from .dsp import DB_MAX, DB_MIN, N_BANDS, Analyzer
-from .fusion import AIR, FRIGATE_AUDIO, FRIGATE_MOVING, Fusion, Mic, prepare_aircraft
-from .providers import Dispatch, birdnet_stream, fetch_aircraft, fetch_types, norm
+from .fusion import AIR, FRIGATE_AUDIO, FRIGATE_MOVING, Fusion, Mic, fmt_km, prepare_aircraft
+from .providers import birdnet_stream, fetch_aircraft, fetch_types, norm
 
 _LOGGER = logging.getLogger(__name__)
 PLATFORMS = [Platform.BINARY_SENSOR, Platform.SENSOR]
 SIGNAL = f"{DOMAIN}_update"
 BACKLOG_S = 90
 CARD_URL = f"/{DOMAIN}_static/soundscape-card.js"
+
+
+def use_imperial(hass: HomeAssistant, choice: str | None) -> bool:
+    """Miles and feet where Home Assistant is set to US customary units, unless told otherwise."""
+    if choice in ("imperial", "metric"):
+        return choice == "imperial"
+    return hass.config.units is US_CUSTOMARY_SYSTEM
 
 
 def parse_overrides(text: str) -> dict[str, str]:
@@ -81,6 +90,7 @@ class Hub:
         self.captures: dict[str, Capture] = {}
         self.backlog: dict[str, bytearray] = {}
         self.subscribers: dict[int, tuple] = {}
+        self.listeners: dict[str, dict[int, tuple]] = {}
         self.fusion: Fusion | None = None
         self.types: dict = {}
         self.meta: dict = {}
@@ -120,11 +130,13 @@ class Hub:
         sun = lambda: (s := hass.states.get("sun.sun")) is not None and s.state == "below_horizon"  # noqa: E731
         self.fusion = Fusion(mics, hass.config.latitude, hass.config.longitude,
                              ignore=opt.get(CONF_IGNORE) or (), adsb=opt.get(CONF_ADSB, "off") != "off",
-                             night=sun)
+                             night=sun, imperial=use_imperial(hass, opt.get(CONF_UNITS)))
         ref = Analyzer(SAMPLE_RATE)
         self.meta = {"bands": N_BANDS, "edges": [round(float(x), 1) for x in ref.band_edges],
                      "cols_per_s": ref.cols_per_s, "db_min": DB_MIN, "db_max": DB_MAX,
-                     "backlog_s": BACKLOG_S, "version": VERSION}
+                     "backlog_s": BACKLOG_S, "version": VERSION, "rate": SAMPLE_RATE,
+                     "units": "mi" if self.fusion.imperial else "km",
+                     "lat": hass.config.latitude, "lon": hass.config.longitude}
         self._backlog_bytes = int(BACKLOG_S * ref.cols_per_s) * N_BANDS
 
         ffmpeg = get_ffmpeg_manager(hass).binary
@@ -142,8 +154,9 @@ class Hub:
             self._tasks.append(bg(hass, birdnet_stream(self.session, base, self._on_birdnet), "soundscape-birdnet"))
         if opt.get(CONF_ADSB, "off") != "off":
             self._tasks.append(bg(hass, self._aircraft_loop(), "soundscape-adsb"))
-        if opt.get(CONF_DISPATCH, "off") == "sdfd":
-            self._dispatch = Dispatch(self.session, hass.config.latitude, hass.config.longitude)
+        if feed := resolve_feed(opt.get(CONF_DISPATCH, "off"), hass.config.latitude, hass.config.longitude):
+            self._dispatch = Dispatch(self.session, feed, hass.config.latitude, hass.config.longitude)
+            self.meta["dispatch"] = self._dispatch.feed["name"]
             self._tasks.append(bg(hass, self._dispatch_loop(), "soundscape-dispatch"))
 
     async def async_stop(self) -> None:
@@ -178,6 +191,29 @@ class Hub:
             for conn, msg_id, wanted in list(self.subscribers.values()):
                 if wanted is None or mic in wanted:
                     conn.send_message(websocket_api.event_message(msg_id, payload))
+
+    # ---------------------------------------------------------- live audio
+    def listen(self, mic: str, key: int, connection, msg_id: int) -> None:
+        self.listeners.setdefault(mic, {})[key] = (connection, msg_id)
+        self.captures[mic].on_pcm = self._pcm_from_thread
+
+    def unlisten(self, mic: str, key: int) -> None:
+        group = self.listeners.get(mic, {})
+        group.pop(key, None)
+        if not group and mic in self.captures:
+            self.captures[mic].on_pcm = None  # nothing leaves the capture thread unless asked for
+
+    def _pcm_from_thread(self, mic: str, data: bytes) -> None:
+        self.hass.loop.call_soon_threadsafe(self._on_pcm, mic, data)
+
+    @callback
+    def _on_pcm(self, mic: str, data: bytes) -> None:
+        group = self.listeners.get(mic)
+        if not group:
+            return
+        payload = {"type": "pcm", "mic": mic, "rate": SAMPLE_RATE, "data": base64.b64encode(data).decode()}
+        for conn, msg_id in list(group.values()):
+            conn.send_message(websocket_api.event_message(msg_id, payload))
 
     # ---------------------------------------------------- Frigate's entities
     @callback
@@ -309,7 +345,8 @@ class Hub:
                 if hits:
                     ev.extra["dispatch"] = hits
                     first = hits[0]
-                    line = f"Dispatch: {first['type']}, {first['address']} ({first['units']}), about {first['km']} km"
+                    line = (f"Dispatch: {first['type']}, {first['address']} ({first['units']}), "
+                            f"{'' if first['exact'] else 'about '}{fmt_km(first['km'], self.fusion.imperial)}")
                     ev.evidence = [x for x in ev.evidence if not x.startswith("Dispatch")] + [line]
 
     # ------------------------------------------------------------------ tick
@@ -365,6 +402,23 @@ def ws_subscribe(hass: HomeAssistant, connection, msg) -> None:
         msg["id"], {"type": "init", "meta": hub.meta, "backlog": backlog, **hub.snapshot()}))
 
 
+@websocket_api.websocket_command({
+    vol.Required("type"): f"{DOMAIN}/listen",
+    vol.Required("mic"): str,
+})
+@callback
+def ws_listen(hass: HomeAssistant, connection, msg) -> None:
+    """Live audio from one microphone: 16-bit mono PCM, base64, for as long as subscribed."""
+    hub: Hub | None = hass.data.get(DOMAIN)
+    if hub is None or msg["mic"] not in hub.captures:
+        connection.send_error(msg["id"], "not_found", "No such microphone")
+        return
+    key, mic = id(connection) * 100000 + msg["id"], msg["mic"]
+    hub.listen(mic, key, connection, msg["id"])
+    connection.subscriptions[msg["id"]] = lambda: hub.unlisten(mic, key)
+    connection.send_result(msg["id"])
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if f"{DOMAIN}_static" not in hass.data:
         hass.data[f"{DOMAIN}_static"] = True
@@ -372,6 +426,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             StaticPathConfig(f"/{DOMAIN}_static", str(Path(__file__).parent / "www"), False)])
         add_extra_js_url(hass, f"{CARD_URL}?v={VERSION}")
         websocket_api.async_register_command(hass, ws_subscribe)
+        websocket_api.async_register_command(hass, ws_listen)
     hub = Hub(hass, entry)
     await hub.async_start()
     hass.data[DOMAIN] = hub

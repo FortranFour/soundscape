@@ -101,6 +101,14 @@ def compass(bearing: float) -> str:
     return COMPASS[int((bearing % 360) / 45 + 0.5) % 8]
 
 
+def fmt_km(km: float, imperial: bool = False) -> str:
+    """A distance in the household's units."""
+    if imperial:
+        mi = km / 1.609344
+        return f"{mi:.1f} mi" if mi >= 0.1 else f"{round(km * 3280.84 / 10) * 10} ft"
+    return f"{km:.1f} km" if km >= 0.1 else f"{round(km * 100) * 10} m"
+
+
 def noisy_or(scores) -> float:
     p = 1.0
     for s in scores:
@@ -246,12 +254,13 @@ class Event:
 
 class Fusion:
     def __init__(self, mics: list[Mic], lat: float, lon: float, *, ignore=(),
-                 adsb: bool = True, night=lambda: False) -> None:
+                 adsb: bool = True, night=lambda: False, imperial: bool = False) -> None:
         self.mics = {m.id: m for m in mics}
         self.lat, self.lon = lat, lon
         self.ignore = set(ignore)
         self.adsb = adsb
         self.night = night
+        self.imperial = imperial
         self.aircraft: list[dict] = []
         self.aircraft_at = 0.0
         self._ext: dict[tuple, Evidence] = {}
@@ -389,7 +398,7 @@ class Fusion:
                     add(key, out_cls, s, text)
                 who = " ".join(x for x in (match["desc"] or match["type"], match["flight"] or match["reg"]) if x)
                 add(key, out_cls, 0.25 + 0.5 * match["audible"],
-                    f"ADS-B: {who} {match['heard_km']} km {compass(match['heard_bearing'])}, {match['alt_ft']:,} ft",
+                    f"ADS-B: {who} {fmt_km(match['heard_km'], self.imperial)} {compass(match['heard_bearing'])}, {match['alt_ft']:,} ft",
                     extra={**extra, "aircraft": match})
                 for ev in [e for e in self._ext.values() if e.cls in AIR and e.cls in (cls, "aircraft")]:
                     add(key, out_cls, ev.score, ev.text, ev.mic)
@@ -473,7 +482,7 @@ class Fusion:
             ev.bearing, ev.distance_m, ev.mic = ac["heard_bearing"], ac["heard_km"] * 1000, None
             ev.detail = (f"{ac['desc'] or ac['type'] or 'Unknown type'}"
                          f"{' ' + (ac['flight'] or ac['reg']) if ac['flight'] or ac['reg'] else ''}"
-                         f" · {ac['heard_km']} km {compass(ac['heard_bearing'])} · {ac['alt_ft']:,} ft")
+                         f" · {fmt_km(ac['heard_km'], self.imperial)} {compass(ac['heard_bearing'])} · {ac['alt_ft']:,} ft")
             if ac["type"] == "V22":
                 ev.label = "Osprey"
             return
@@ -514,6 +523,6 @@ class Fusion:
         return {
             "now": now, "mics": mics,
             "active": [e.as_dict() for e in sorted(self.active.values(), key=lambda e: -e.conf)],
-            "recent": [e.as_dict() for e in list(self.history)[:40]],
+            "recent": [e.as_dict() for e in list(self.history)[:150]],
             "aircraft": self.aircraft[:25] if now - self.aircraft_at < 90 else [],
         }
