@@ -96,6 +96,19 @@ Everything is also in the card's visual editor, which shows each option's defaul
 
 The map can be dragged, and zoomed with the wheel, a pinch, or the + and − buttons; the house button returns to the house and the starting zoom. The zoom and position are remembered in that browser.
 
+### Recordings and isolating a sound
+
+![A sound's recording, as recorded and isolated](docs/card-clip.png)
+
+Select a sound, in the list or among the chips, and its details open with a recording: up to 30 seconds from the microphone that heard it best, starting 8 seconds before the sound was reported, since recognising a sound takes a few seconds. The dashed line marks where it was reported.
+
+- **Play** plays it exactly as the microphone delivered it. Click anywhere on the spectrogram to play from there.
+- **Isolate** redraws the spectrogram with only that kind of sound: its frequency band (1.5 to 11 kHz for a bird, 400 Hz to 4 kHz for a siren, below 1.5 kHz for a rotor, and so on), and within the band only what rises well above that microphone's steady background. Playing while it is on sends the recording through a band-pass for the same band.
+
+Isolating is a filter, not a separation: another sound in the same band at the same moment stays in. It removes hum, wind rumble, and anything in a different part of the spectrum, which is usually what is in the way.
+
+Recordings are kept for the last 100 sounds in Home Assistant's temporary storage. They are never part of a backup and are cleared on restart, as the list is. They include whatever the microphone heard, voices too, and any Home Assistant user who can see the card can play them. To keep none, turn off *Keep a short recording of each sound* on the Microphones page of the integration's settings.
+
 ![Fisheye mode](docs/card-fisheye.png)
 
 **Fisheye.** `radar: fisheye` keeps the map near true scale around the house and compresses it logarithmically further out, so the yard and aircraft miles away sit on one real map. Directions are never bent, only distances, so streets curve. The map reach (`map_radius_m` or `map_radius_ft`) is the distance drawn at 30 % of the radius and the aircraft range (`range_km` or `range_mi`) is the rim; the + and − buttons and the wheel change the range. It is drawn from tiles at about ten zoom levels, some thirty tiles in all, and needs a map source that lets its tiles be read back, which OpenStreetMap and Esri do. Satellite reads better than streets here, because street labels come out at a different size in each band. It always centres on the house, so set the house's position in `map` mode first.

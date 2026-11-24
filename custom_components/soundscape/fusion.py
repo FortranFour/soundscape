@@ -239,6 +239,7 @@ class Event:
     levels: dict = field(default_factory=dict)
     evidence: list = field(default_factory=list)
     extra: dict = field(default_factory=dict)
+    clip: bool = False     # a recording of it has been kept
 
     def as_dict(self) -> dict:
         return {
@@ -248,7 +249,7 @@ class Event:
             "bearing": None if self.bearing is None else round(self.bearing),
             "compass": None if self.bearing is None else compass(self.bearing),
             "distance_m": self.distance_m, "far": self.far, "method": self.method,
-            "levels": self.levels, "evidence": self.evidence, "extra": self.extra,
+            "levels": self.levels, "evidence": self.evidence, "extra": self.extra, "clip": self.clip,
         }
 
 

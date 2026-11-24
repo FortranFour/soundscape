@@ -45,6 +45,22 @@
   window.card = card; window.calls = [];
   card.hass = { user: { is_admin: true }, callWS: async (msg) => {
     window.calls.push(JSON.stringify(msg));
+    if (msg.type === 'soundscape/clip') {   // 20 s: hiss, a hum, bird chirps high up, and a siren from 6 to 16 s
+      const rate = 24000, n = rate * 20, pcm = new Int16Array(n);
+      let ph = 0, seed = 7;
+      for (let i = 0; i < n; i++) {
+        const t = i / rate;
+        seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+        let v = (seed / 0x7fffffff - 0.5) * 0.02 + 0.01 * Math.sin(2 * Math.PI * 120 * t);
+        if (t > 6 && t < 16) { const tri = Math.abs(((t - 6) / 4.5 % 1) * 2 - 1); ph += 2 * Math.PI * (650 + 800 * tri) / rate; v += 0.25 * Math.sin(ph) + 0.08 * Math.sin(2 * ph); }
+        if (t % 1.7 < 0.25) v += 0.12 * Math.sin(2 * Math.PI * (4200 + 3000 * (t % 1.7)) * t);
+        pcm[i] = Math.max(-1, Math.min(1, v)) * 32767;
+      }
+      const bytes = new Uint8Array(pcm.buffer); let bin = '';
+      for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+      const ev = [...init.active, ...init.recent].find((e) => e.id === msg.event);
+      return { rate, t0: ev.start - 8, mic: 'Front', data: btoa(bin) };
+    }
     if (msg.type === 'map_tiles/access_token') { if (q.get('proxy') === '0') throw new Error('unknown command'); return { token: 'tok123' }; }
     return null;
   }, connection: { subscribeMessage: async (cb, msg) => {
@@ -52,6 +68,8 @@
     if (msg.type === 'soundscape/listen') { window.pcm = cb; return () => window.calls.push('stop:' + msg.mic); }
     cb(init); window.feed = cb; return () => {};
   } } };
+  init.recent.forEach((e) => { e.clip = true; });
+  if (q.get('recent')) { card._open = String(init.recent.find((e) => e.cls === q.get('recent'))?.id); card._render(); }
   if (q.get('open')) { card._open = String(init.active.find((e) => e.cls === q.get('open'))?.id); card._render(); }
   window.ready = true;
 </script>

@@ -1,6 +1,6 @@
 """Constants for Soundscape."""
 DOMAIN = "soundscape"
-VERSION = "0.3.2"
+VERSION = "0.4.0"
 EVENT = "soundscape_event"
 
 CONF_FRIGATE_URL = "frigate_url"
@@ -15,9 +15,16 @@ CONF_DISPATCH = "dispatch"
 CONF_IGNORE = "ignore"
 CONF_GEOMETRY = "geometry"
 CONF_UNITS = "units"
+CONF_CLIPS = "clips"
 
 DEFAULT_TEMPLATE = "rtsp://{host}:8554/{camera}"
 SAMPLE_RATE = 24000
+
+# Recordings of recent sounds: where each starts and how long it may run
+CLIP_BEFORE = 8.0     # seconds before the sound was reported; detection itself lags the sound by a few
+CLIP_AFTER = 2.0
+CLIP_MAX = 30.0
+CLIPS_KEPT = 100
 
 ADSB_PROVIDERS = {
     "adsb.fi": "https://opendata.adsb.fi/api/v3/lat/{lat}/lon/{lon}/dist/{nm}",

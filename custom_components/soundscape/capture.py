@@ -5,6 +5,8 @@ import logging
 import re
 import subprocess
 import threading
+import time
+from collections import deque
 from collections.abc import Callable
 
 from .dsp import HOP, HOPS_PER_COL, Analyzer
@@ -26,6 +28,9 @@ class Capture(threading.Thread):
         self.error: str | None = None
         self.running = False
         self.on_pcm: Callable | None = None  # set while someone is listening live
+        self.ring_seconds = 0.0              # how much raw audio to remember, for recordings of sounds
+        self.ring: deque[tuple[float, bytes]] = deque()
+        self._ring_bytes = 0
 
     def stop(self) -> None:
         self._halt.set()
@@ -61,6 +66,11 @@ class Capture(threading.Thread):
                     data = data[: len(data) & ~1]
                     if listener := self.on_pcm:
                         listener(self.mic, data)
+                    if self.ring_seconds:
+                        self.ring.append((time.time(), data))
+                        self._ring_bytes += len(data)
+                        while self._ring_bytes > self.ring_seconds * self.sr * 2:
+                            self._ring_bytes -= len(self.ring.popleft()[1])
                     cols, n, feats = analyzer.process(data)
                     if n or feats:
                         self._on_audio(self.mic, cols, n, feats)
@@ -78,6 +88,21 @@ class Capture(threading.Thread):
                             self.mic, self.error, wait)
             self._halt.wait(wait)
             wait = 5.0 if got > self.sr * 2 * 60 else min(120.0, wait * 2)
+
+    def cut(self, t0: float, t1: float) -> tuple[float, bytes]:
+        """The remembered audio between two clock times: (when it actually starts, PCM)."""
+        out, first = [], None
+        for t_end, data in list(self.ring):
+            t_start = t_end - len(data) / 2 / self.sr
+            if t_end <= t0 or t_start >= t1:
+                continue
+            a = max(0, int((t0 - t_start) * self.sr)) * 2
+            b = min(len(data), int((t1 - t_start) * self.sr) * 2)
+            if b > a:
+                if first is None:
+                    first = t_start + a / 2 / self.sr
+                out.append(data[a:b])
+        return first or t0, b"".join(out)
 
     @staticmethod
     def _drain(proc: subprocess.Popen, errors: list[str]) -> None:

@@ -27,7 +27,7 @@
  *   log_max: 100              # rows kept in the list
  *   log_hide: []              # kinds to leave out, e.g. [vehicle, voice]
  */
-const VERSION = '0.3.2';
+const VERSION = '0.4.0';
 
 const GROUP = {
   bird: 'life', coyote: 'life', dog: 'life', cat: 'life', voice: 'life',
@@ -65,6 +65,34 @@ const OSM_CREDIT = '© OpenStreetMap contributors';
 /* OpenStreetMap's servers want to know which page is asking. Home Assistant tells the browser not to
    say, so the tiles ask for the site's address (never the full page address) to be sent after all. */
 const OSM_DIRECT = ['https://tile.openstreetmap.org/{z}/{x}/{y}.png', OSM_CREDIT, 19, 'origin'];
+
+/* What "isolate" keeps for each kind of sound: the band it lives in, in Hz. Everything outside is dropped,
+   and inside it only what rises above that microphone's steady background is kept. */
+const ISOLATE = {
+  bird: [1500, 11000], coyote: [300, 3000], dog: [250, 3500], cat: [300, 4500], voice: [100, 4000],
+  vehicle: [80, 3000], horn: [300, 3500], machinery: [60, 4000], weather: [30, 2000],
+  siren: [400, 4000], car_alarm: [800, 5000], glass: [2000, 11000], bang: [50, 4000], alarm: [1500, 5000],
+  jet: [50, 2500], propeller: [50, 1200], helicopter: [30, 1500], tiltrotor: [30, 1500], aircraft: [50, 2500],
+};
+
+/* In-place radix-2 FFT of a real signal, sized once. */
+function makeFFT(n) {
+  const rev = new Uint32Array(n), cos = new Float32Array(n / 2), sin = new Float32Array(n / 2), bits = Math.log2(n);
+  for (let i = 0; i < n; i++) { let r = 0; for (let b = 0; b < bits; b++) r |= ((i >> b) & 1) << (bits - 1 - b); rev[i] = r; }
+  for (let i = 0; i < n / 2; i++) { cos[i] = Math.cos(2 * Math.PI * i / n); sin[i] = Math.sin(2 * Math.PI * i / n); }
+  return (re, im) => {
+    for (let i = 0; i < n; i++) { const j = rev[i]; if (j > i) { const t = re[i]; re[i] = re[j]; re[j] = t; } im[i] = 0; }
+    for (let size = 2; size <= n; size <<= 1) {
+      const half = size >> 1, step = n / size;
+      for (let i = 0; i < n; i += size) {
+        for (let j = 0, k = 0; j < half; j++, k += step) {
+          const a = i + j, b = a + half, tr = re[b] * cos[k] + im[b] * sin[k], ti = im[b] * cos[k] - re[b] * sin[k];
+          re[b] = re[a] - tr; im[b] = im[a] - ti; re[a] += tr; im[a] += ti;
+        }
+      }
+    }
+  };
+}
 
 const TILE_CACHE = new Map();   // tiles being fetched for the fisheye views, shared by every card on the page
 const TILE_DATA = new Map();    // their pixels once read, for redrawing while a drag is under way
@@ -193,6 +221,7 @@ class SoundscapeCard extends HTMLElement {
     this._unsub?.then((u) => u && u()).catch(() => {});
     this._unsub = null;
     this._listenStop();
+    this._clipStop();
   }
 
   _subscribe() {
@@ -303,6 +332,14 @@ class SoundscapeCard extends HTMLElement {
         <div class="body">
         <div class="now"></div>
         <div class="why" hidden></div>
+        <div class="clip" hidden>
+          <div class="cbar">
+            <button class="cplay" title="Play the recording as the microphone heard it"><ha-icon icon="mdi:play"></ha-icon></button>
+            <button class="ciso" title="Show only this sound: its frequency band, with the steady background removed"><ha-icon icon="mdi:filter-variant"></ha-icon><span>Isolate</span></button>
+            <span class="cinfo"></span>
+          </div>
+          <div class="cframe" hidden><canvas class="cspec"></canvas><div class="cmarks"></div><div class="ccursor" hidden></div></div>
+        </div>
         ${c.show_radar ? `<div class="radar${map ? ' map' : ''}${fish ? ' fish' : ''}${c.radar === 'hyperbolic' ? ' hyper' : ''}">${fish ? '<canvas class="warp"></canvas><div class="note" hidden></div>' : map ? '<div class="tiles"></div>' : ''}<div class="plot"></div>${map ? `<div class="credit"></div>
           <div class="mapctl"><button data-zoom="0.625" title="Zoom in">+</button><button data-zoom="1.6" title="Zoom out">&minus;</button>
             <button class="recenter" title="Back to the house and the starting zoom"><ha-icon icon="mdi:home-outline"></ha-icon></button>
@@ -330,6 +367,10 @@ class SoundscapeCard extends HTMLElement {
         const hit = (sel) => e.target.closest(sel);
         if (hit('.hear')) { this._listening ? this._listenStop() : this._listenStart(); return; }
         if (hit('.mute')) { this._muted = !this._muted; this._listenUi(); return; }
+        if (hit('.cplay')) { this._play ? this._clipStop() : this._clipPlay(0); return; }
+        if (hit('.ciso')) { this._clipIsolate(!this._iso); return; }
+        const strip = hit('.cframe');
+        if (strip && this._clip) { const b = strip.getBoundingClientRect(); this._clipPlay((e.clientX - b.left) / b.width * this._clip.seconds); return; }
         if (Date.now() - (this._dragged || 0) < 250) return;      // the end of a drag is not a click
         const zoom = hit('[data-zoom]');
         if (zoom && this._isFish) { this._fishZoom(Number(zoom.dataset.zoom)); return; }
@@ -393,6 +434,7 @@ class SoundscapeCard extends HTMLElement {
       this._set('.why', `<b>${esc(open.label)}</b> · ${Math.round(open.conf * 100)}% · ${clock(open.start)}<ul>${lines.join('')}${disp.join('')}</ul>${this._levels(open)}`);
     }
 
+    this._clipUi(open);
     if (this._c.show_radar && this._c.radar !== 'schematic') this._source();   // renews the street tiles' token when due
     if (this._c.show_radar) this._set('.plot', this._c.radar === 'map' ? this._mapPlot(st) : this._isFish ? this._fishPlot(st) : this._radar(st));
     if (this._c.show_spectrogram) this._specUi(st);
@@ -1003,6 +1045,167 @@ class SoundscapeCard extends HTMLElement {
     ctx.drawImage(s.canvas, s.canvas.width - cols, 0, cols, s.canvas.height, 0, 0, w, h);
   }
 
+  /* ------------------------------------------- the recording of one sound */
+  _clipUi(open) {
+    const root = this.shadowRoot, el = root.querySelector('.clip');
+    if (!el) return;
+    if (!open) { el.hidden = true; if (this._clipId != null) { this._clipStop(); this._clipId = null; this._clip = null; } return; }
+    el.hidden = false;
+    if (this._clipId !== open.id) {
+      this._clipStop();
+      this._clipId = open.id; this._clip = null; this._clipFailed = false; this._iso = false;
+    }
+    if (open.clip && !this._clip && !this._clipBusy && !this._clipFailed) this._clipLoad(open);
+    const have = this._clip?.id === open.id;
+    const mic = have ? this._state.mics.find((m) => m.id === this._clip.mic)?.name || this._clip.mic : '';
+    root.querySelector('.cinfo').textContent = have ? `${mic} · ${Math.round(this._clip.seconds)} s${this._iso ? ` · ${this._clip.band[0]}–${this._clip.band[1]} Hz, background removed` : ' · as recorded'}`
+      : this._clipFailed ? 'The recording could not be loaded.'
+        : open.clip ? 'Loading the recording…'
+          : open.active ? 'A recording will be ready a few seconds after this ends.' : 'No recording was kept for this sound.';
+    root.querySelector('.cframe').hidden = !have;
+    for (const b of root.querySelectorAll('.cplay, .ciso')) b.disabled = !have;
+    root.querySelector('.ciso').classList.toggle('on', !!this._iso);
+    root.querySelector('.cplay').firstElementChild.setAttribute('icon', this._play ? 'mdi:stop' : 'mdi:play');
+    if (have) {
+      const c = this._clip, at = (t) => Math.max(0, Math.min(100, (t - c.t0) / c.seconds * 100));
+      this._set('.cmarks', `<span style="left:${at(open.start).toFixed(1)}%">reported</span>${open.end ? `<i style="left:${at(open.end).toFixed(1)}%"></i>` : ''}`);
+    }
+  }
+
+  async _clipLoad(ev) {
+    this._clipBusy = true;
+    try {
+      const r = await this._hass.callWS({ type: 'soundscape/clip', event: ev.id });
+      const bytes = b64(r.data), n = bytes.length >> 1, pcm = new Int16Array(bytes.buffer, 0, n), x = new Float32Array(n);
+      for (let i = 0; i < n; i++) x[i] = pcm[i] / 32768;
+      if (this._clipId !== ev.id) return;
+      this._clip = { id: ev.id, x, rate: r.rate, t0: r.t0, mic: r.mic, seconds: n / r.rate, band: ISOLATE[ev.cls] || [60, 11000], ...this._clipSpectra(x, r.rate, ISOLATE[ev.cls] || [60, 11000]) };
+      this._clipDraw();
+    } catch (err) {
+      if (this._clipId === ev.id) this._clipFailed = true;
+    } finally {
+      this._clipBusy = false;
+      if (this._state) this._render();
+    }
+  }
+
+  /* Two pictures of the recording on the card's usual frequency scale: as recorded, and isolated. */
+  _clipSpectra(x, rate, band) {
+    const N = 1024, HOP = 256, GROUP = 4, half = N / 2 + 1, bands = this._meta.bands, edges = this._meta.edges;
+    const frames = Math.max(0, Math.floor((x.length - N) / HOP) + 1), cols = Math.floor(frames / GROUP);
+    if (!cols) return { cols: 0 };
+    const fft = SoundscapeCard._fft || (SoundscapeCard._fft = makeFFT(N));
+    const win = new Float32Array(N); for (let i = 0; i < N; i++) win[i] = 0.5 - 0.5 * Math.cos(2 * Math.PI * i / N);
+    const re = new Float32Array(N), im = new Float32Array(N), P = new Float32Array(cols * half);
+    for (let c = 0; c < cols; c++) {
+      for (let g = 0; g < GROUP; g++) {
+        const o = (c * GROUP + g) * HOP;
+        for (let i = 0; i < N; i++) re[i] = x[o + i] * win[i];
+        fft(re, im);
+        for (let k = 0; k < half; k++) P[c * half + k] += (re[k] * re[k] + im[k] * im[k]) / GROUP;
+      }
+    }
+    /* each bin's steady background: its quiet level over the recording */
+    const floor = new Float32Array(half), col = new Float32Array(cols);
+    for (let k = 0; k < half; k++) {
+      for (let c = 0; c < cols; c++) col[c] = P[c * half + k];
+      floor[k] = Array.from(col).sort((a, b) => a - b)[Math.floor(cols * 0.2)] + 1e-12;
+    }
+    const lo = new Uint16Array(bands), hi = new Uint16Array(bands), hz = rate / N;
+    for (let b = 0; b < bands; b++) { lo[b] = Math.min(half - 1, Math.floor(edges[b] / hz)); hi[b] = Math.min(half, Math.max(lo[b] + 1, Math.ceil(edges[b + 1] / hz))); }
+    const k0 = Math.floor(band[0] / hz), k1 = Math.ceil(band[1] / hz);
+    const db = new Float32Array(cols * bands), iso = new Uint8Array(cols * bands);
+    for (let c = 0; c < cols; c++) {
+      for (let b = 0; b < bands; b++) {
+        let sum = 0, extra = 0, base = 0;
+        for (let k = lo[b]; k < hi[b]; k++) {
+          const p = P[c * half + k];
+          sum += p; base += floor[k];
+          if (k >= k0 && k <= k1) extra += Math.max(0, p - 4 * floor[k]);     // only what clearly stands above the background
+        }
+        db[c * bands + b] = 10 * Math.log10(sum / (hi[b] - lo[b]) + 1e-14);
+        iso[c * bands + b] = Math.max(0, Math.min(255, 10 * Math.log10(1 + extra / base) / 34 * 255));
+      }
+    }
+    /* as recorded: stretch the colours between the quiet and loud ends, as the live view does */
+    const sorted = Array.from(db).sort((a, b) => a - b), a = sorted[Math.floor(sorted.length * 0.08)] - 2;
+    const z = Math.max(sorted[Math.floor(sorted.length * 0.997)] + 3, a + 35), raw = new Uint8Array(cols * bands);
+    for (let i = 0; i < db.length; i++) raw[i] = Math.max(0, Math.min(255, (db[i] - a) / (z - a) * 255));
+    return { cols, raw, iso };
+  }
+
+  _clipDraw() {
+    const cv = this.shadowRoot.querySelector('.cspec'), c = this._clip;
+    if (!cv || !c?.cols) return;
+    const bands = this._meta.bands, src = this._iso ? c.iso : c.raw;
+    cv.width = c.cols; cv.height = bands;
+    const ctx = cv.getContext('2d'), img = ctx.createImageData(c.cols, bands);
+    for (let x = 0; x < c.cols; x++) {
+      for (let b = 0; b < bands; b++) {
+        const v = src[x * bands + b] * 4, o = ((bands - 1 - b) * c.cols + x) * 4;
+        img.data[o] = LUT[v]; img.data[o + 1] = LUT[v + 1]; img.data[o + 2] = LUT[v + 2]; img.data[o + 3] = 255;
+      }
+    }
+    ctx.putImageData(img, 0, 0);
+  }
+
+  _clipIsolate(on) {
+    this._iso = on;
+    this._clipDraw();
+    if (this._play) this._clipPlay(this._clipPos());      // carry on from the same place, through the filter or not
+    else if (this._state) this._render();
+  }
+
+  _clipPos() { return this._play ? this._clipCtx.currentTime - this._play.since : 0; }
+
+  /* Plays the recording untouched; with Isolate on, through a band-pass for that kind of sound. */
+  _clipPlay(from) {
+    const c = this._clip;
+    if (!c) return;
+    this._clipStop();
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    this._clipCtx = this._clipCtx || new Ctx();
+    const ctx = this._clipCtx;
+    ctx.resume?.();
+    const buf = ctx.createBuffer(1, c.x.length, c.rate);
+    buf.getChannelData(0).set(c.x);
+    const src = ctx.createBufferSource();
+    src.buffer = buf;
+    let node = src;
+    if (this._iso) {
+      for (const [type, f] of [['highpass', c.band[0]], ['highpass', c.band[0]], ['lowpass', c.band[1]], ['lowpass', c.band[1]]]) {
+        const q = ctx.createBiquadFilter();
+        q.type = type; q.frequency.value = Math.min(f, c.rate / 2 * 0.95); q.Q.value = 0.707;
+        node.connect(q); node = q;
+      }
+    }
+    const gain = ctx.createGain();
+    gain.gain.value = Math.max(0.05, this._volume) ** 2 * 4;
+    node.connect(gain); gain.connect(ctx.destination);
+    const offset = Math.max(0, Math.min(c.seconds - 0.05, from || 0));
+    const play = this._play = { src, since: ctx.currentTime - offset };
+    src.onended = () => { if (this._play === play) this._clipStop(); };
+    src.start(0, offset);
+    const cursor = this.shadowRoot.querySelector('.ccursor');
+    const tick = () => {
+      if (this._play !== play) return;
+      cursor.hidden = false;
+      cursor.style.left = `${Math.min(100, this._clipPos() / c.seconds * 100)}%`;
+      requestAnimationFrame(tick);
+    };
+    tick();
+    if (this._state) this._render();
+  }
+
+  _clipStop() {
+    const play = this._play;
+    this._play = null;
+    if (play) { try { play.src.onended = null; play.src.stop(); } catch (e) { /* already stopped */ } }
+    const cursor = this.shadowRoot?.querySelector('.ccursor');
+    if (cursor) cursor.hidden = true;
+    if (play && this._state && this._built) this._render();
+  }
+
   /* ---------------------------------------------------------- live audio */
   _listenStart() {
     const mic = this._shown;
@@ -1092,6 +1295,20 @@ const STYLE = `
   .lv { display: grid; grid-template-columns: auto 1fr auto; gap: 3px 8px; align-items: center; margin-top: 6px; color: var(--secondary-text-color); }
   .lv i { height: 5px; border-radius: 3px; background: color-mix(in srgb, var(--primary-text-color) 12%, transparent); }
   .lv b { display: block; height: 100%; border-radius: 3px; background: var(--primary-color); }
+
+  .clip { margin-top: 8px; }
+  .cbar { display: flex; align-items: center; gap: 6px; }
+  .cbar button { all: unset; cursor: pointer; height: 26px; min-width: 28px; padding: 0 8px; box-sizing: border-box; display: inline-flex; align-items: center; justify-content: center; gap: 4px;
+    border-radius: 13px; border: 1px solid var(--divider-color); color: var(--primary-text-color); font-size: 12px; --mdc-icon-size: 16px; }
+  .cbar button.on, .cbar .cplay { background: var(--primary-color); border-color: var(--primary-color); color: var(--text-primary-color, #fff); }
+  .cbar button[disabled] { opacity: .4; pointer-events: none; }
+  .cinfo { flex: 1; font-size: 12px; color: var(--secondary-text-color); margin-left: 4px; }
+  .cframe { position: relative; height: 110px; margin-top: 6px; border-radius: 8px; overflow: hidden; background: #000; cursor: pointer; }
+  .cframe[hidden], .ccursor[hidden] { display: none; }
+  .cspec { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .cmarks span, .cmarks i { position: absolute; top: 0; bottom: 0; border-left: 1px dashed rgba(255,255,255,.75); }
+  .cmarks span { padding: 2px 4px; font-size: 10px; color: #fff; text-shadow: 0 0 3px #000; white-space: nowrap; }
+  .ccursor { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: #fff; box-shadow: 0 0 3px #000; pointer-events: none; }
 
   .radar { margin: 6px auto 0; max-width: 430px; position: relative; }
   svg { display: block; width: 100%; overflow: visible; }

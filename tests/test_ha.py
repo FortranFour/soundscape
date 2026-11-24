@@ -55,7 +55,7 @@ async def test_flow_capture_and_feed(hass, hass_ws_client, tmp_path, socket_enab
         result["flow_id"], {"adsb_provider": "off", "adsb_radius_km": 9, "dispatch": "off", "units": "auto"})  # 9 miles
     assert result["step_id"] == "cameras", result
     result = await hass.config_entries.flow.async_configure(result["flow_id"], {
-        "cameras": [], "stream_template": "rtsp://{host}:8554/{camera}", "ignore": [],
+        "cameras": [], "stream_template": "rtsp://{host}:8554/{camera}", "ignore": [], "clips": True,
         "stream_overrides": f"front={tmp_path}/front.wav\nbackyard={tmp_path}/backyard.wav"})
     assert result["step_id"] == "geometry", result
     result = await hass.config_entries.flow.async_configure(result["flow_id"], {
@@ -113,14 +113,41 @@ async def test_flow_capture_and_feed(hass, hass_ws_client, tmp_path, socket_enab
     assert hass.states.get("sensor.soundscape_now_hearing").state == "Siren"
     assert all(m["ok"] for m in states[-1]["mics"])
 
+    # a recording is kept for each sound: here the dog, which ends when Frigate's sensor clears
+    hass.states.async_set("binary_sensor.front_bark_sound", "off")
+    clip_of = None
+    async with asyncio.timeout(20):
+        while clip_of is None:
+            msg = await ws.receive_json()
+            ev = msg.get("event") or {}
+            if ev.get("type") == "state":
+                clip_of = next((e["id"] for e in ev["recent"] if e["cls"] == "dog" and e["clip"]), None)
+    await ws.send_json({"id": 8, "type": "soundscape/clip", "event": clip_of})
+    async with asyncio.timeout(5):
+        while True:
+            msg = await ws.receive_json()
+            if msg["id"] == 8:
+                break
+    assert msg["success"], msg
+    clip = msg["result"]
+    seconds = len(base64.b64decode(clip["data"])) / 2 / clip["rate"]
+    assert clip["mic"] == "front" and 5 < seconds <= 30.5, seconds
+    await ws.send_json({"id": 10, "type": "soundscape/clip", "event": 1})
+    async with asyncio.timeout(5):
+        while True:
+            msg = await ws.receive_json()
+            if msg["id"] == 10:
+                break
+    assert not msg["success"] and msg["error"]["code"] == "not_found"
+
     # the house can be moved from the card's map; it is kept and told to every open card
     hub = hass.data["soundscape"]
-    await ws.send_json({"id": 9, "type": "soundscape/set_home", "lat": 32.7301, "lon": -117.1502})
+    await ws.send_json({"id": 11, "type": "soundscape/set_home", "lat": 32.7301, "lon": -117.1502})
     seen = {}
     async with asyncio.timeout(5):
         while len(seen) < 2:
             msg = await ws.receive_json()
-            if msg["id"] == 9:
+            if msg["id"] == 11:
                 seen["result"] = msg["success"]
             elif msg.get("event", {}).get("type") == "meta":
                 seen["meta"] = msg["event"]["meta"]

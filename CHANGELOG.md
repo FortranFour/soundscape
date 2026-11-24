@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.0
+
+- Recordings: each sound keeps up to 30 seconds from the microphone that heard it best. Select a sound in the list or a chip to see the recording's spectrogram and play it as recorded; click the spectrogram to play from that point.
+- Isolate: a switch on the same panel redraws the spectrogram with only that kind of sound's frequency band and with the microphone's steady background removed, and plays it through a matching band-pass.
+- Recordings are held in temporary storage for the last 100 sounds, are never in a backup, and are cleared when Home Assistant restarts. A setting on the Microphones page turns them off.
+
 ## 0.3.2
 
 - The integration has its own icon and logo: a location pin holding a waveform, between two sound arcs.

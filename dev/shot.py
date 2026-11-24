@@ -103,6 +103,28 @@ try:
         print("after house moved", view())
         pg.reload(); pg.wait_for_function("window.ready === true", timeout=15000)
         print("after reload (zoom remembered)", view(), "errors", errs)
+        # ---- a past sound's recording: its spectrogram as recorded and isolated, play, seek
+        pg = b.new_page(viewport={"width": 520, "height": 620}, device_scale_factor=2)
+        errs = []
+        pg.on("pageerror", lambda e: errs.append(str(e)))
+        pg.goto("http://127.0.0.1:8765/dev/harness.html?theme=dark&recent=siren&config=" + quote(json.dumps({"show_radar": False, "show_spectrogram": False, "log_rows": 4})))
+        pg.wait_for_function("window.ready === true", timeout=15000)
+        pg.wait_for_function("card._clip && card._clip.cols > 0", timeout=15000)
+        info = lambda: pg.evaluate("card.shadowRoot.querySelector('.cinfo').textContent")  # noqa: E731
+        lit = lambda: pg.evaluate("(() => { const c = card.shadowRoot.querySelector('.cspec'), d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; let n = 0; for (let i = 0; i < d.length; i += 4) if (d[i] + d[i + 1] + d[i + 2] > 90) n++; return Math.round(n / (c.width * c.height) * 100); })()")  # noqa: E731
+        print("clip:", info(), "| columns", pg.evaluate("card._clip.cols"), "| bright", lit(), "%")
+        pg.screenshot(path="shot-clip.png", full_page=True)
+        pg.evaluate("card.shadowRoot.querySelector('.ciso').click()"); pg.wait_for_timeout(200)
+        print("isolated:", info(), "| bright", lit(), "%")
+        pg.screenshot(path="shot-clip-isolated.png", full_page=True)
+        pg.evaluate("card.shadowRoot.querySelector('.cplay').click()"); pg.wait_for_timeout(700)
+        p1 = pg.evaluate("card._clipPos()")
+        box = pg.evaluate("(() => { const r = card.shadowRoot.querySelector('.cframe').getBoundingClientRect(); return [r.x, r.y, r.width, r.height]; })()")
+        pg.mouse.click(box[0] + box[2] * 0.5, box[1] + box[3] / 2); pg.wait_for_timeout(300)
+        p2 = pg.evaluate("card._clipPos()")
+        pg.evaluate("card.shadowRoot.querySelector('.cplay').click()"); pg.wait_for_timeout(100)
+        print("playing at", round(p1, 2), "s; after a click halfway", round(p2, 2), "s; stopped:", pg.evaluate("card._play === null"), "| errors", errs)
+
         # ---- hyperbolic: drag a place to the middle and it stays under the pointer
         pg = b.new_page(viewport={"width": 520, "height": 760}, device_scale_factor=2)
         errs = []

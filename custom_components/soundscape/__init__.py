@@ -5,7 +5,10 @@ import asyncio
 import base64
 import logging
 import re
+import shutil
+import tempfile
 import time
+import wave
 from datetime import datetime, timedelta
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -29,7 +32,8 @@ from homeassistant.util.unit_system import US_CUSTOMARY_SYSTEM
 
 from .capture import Capture
 from .const import (
-    CONF_ADSB, CONF_ADSB_RADIUS, CONF_ADSB_URL, CONF_BIRDNET_URL, CONF_CAMERAS, CONF_DISPATCH,
+    CLIP_AFTER, CLIP_BEFORE, CLIP_MAX, CLIPS_KEPT,
+    CONF_ADSB, CONF_ADSB_RADIUS, CONF_ADSB_URL, CONF_BIRDNET_URL, CONF_CAMERAS, CONF_CLIPS, CONF_DISPATCH,
     CONF_FRIGATE_URL, CONF_GEOMETRY, CONF_IGNORE, CONF_OVERRIDES, CONF_TEMPLATE, CONF_UNITS,
     DEFAULT_TEMPLATE, DOMAIN, EVENT, SAMPLE_RATE, VERSION,
 )
@@ -105,6 +109,11 @@ class Hub:
         # Where the house is. Home Assistant's own location unless corrected from the card's map.
         self.lat, self.lon = hass.config.latitude, hass.config.longitude
         self._home_store = Store(hass, 1, f"{DOMAIN}_home")
+        # Recordings live in the temporary folder: never in a backup, and gone with a restart, like the list itself.
+        self.clips: dict[int, dict] = {}
+        self._clip_wait: dict[int, object] = {}
+        self._clip_dir = Path(tempfile.gettempdir()) / f"{DOMAIN}_clips"
+        self._keep_clips = bool(self.opt.get(CONF_CLIPS, True))
 
     # ------------------------------------------------------------ lifecycle
     async def async_start(self) -> None:
@@ -148,9 +157,12 @@ class Hub:
         for mic in mics:
             self.backlog[mic.id] = bytearray()
             cap = Capture(ffmpeg, mic.id, urls[mic.id], SAMPLE_RATE, self._from_thread)
+            cap.ring_seconds = (CLIP_MAX + CLIP_BEFORE + 20) if self._keep_clips else 0
             self.captures[mic.id] = cap
             cap.start()
 
+        if self._keep_clips:
+            await hass.async_add_executor_job(self._clip_dir_reset, True)
         self._unsubs.append(async_track_time_interval(hass, self._tick, timedelta(seconds=1)))
         self._unsubs.append(async_track_time_interval(hass, self._scan_entities, timedelta(minutes=2)))
         self._scan_entities()
@@ -174,6 +186,7 @@ class Hub:
         for cap in self.captures.values():
             cap.stop()
         await self.hass.async_add_executor_job(lambda: [c.join(5) for c in self.captures.values()])
+        await self.hass.async_add_executor_job(self._clip_dir_reset, False)
 
     # ------------------------------------------------------------- audio in
     def _from_thread(self, mic: str, cols: bytes, n: int, feats) -> None:
@@ -196,6 +209,62 @@ class Hub:
             for conn, msg_id, wanted in list(self.subscribers.values()):
                 if wanted is None or mic in wanted:
                     conn.send_message(websocket_api.event_message(msg_id, payload))
+
+    # ------------------------------------------------------------ recordings
+    def _clip_dir_reset(self, make: bool) -> None:
+        shutil.rmtree(self._clip_dir, ignore_errors=True)
+        if make:
+            self._clip_dir.mkdir(parents=True, exist_ok=True)
+
+    def _clip_mic(self, ev) -> str | None:
+        """The microphone that heard it best."""
+        if ev.mic in self.captures:
+            return ev.mic
+        heard = {k: v for k, v in ev.levels.items() if k in self.captures}
+        return max(heard, key=heard.get) if heard else next(iter(self.captures), None)
+
+    def _clips_tick(self, started, ended, now: float) -> None:
+        """Cut a recording when a sound ends, or once it has run as long as a recording may."""
+        for ev in started:
+            self._clip_wait[ev.id] = ev
+        for ev in list(self._clip_wait.values()):
+            window_end = ev.start - CLIP_BEFORE + CLIP_MAX
+            if ev.end is None and now < window_end + 1:
+                continue
+            del self._clip_wait[ev.id]
+            mic = self._clip_mic(ev)
+            if mic is None:
+                continue
+            last = ev.end if ev.end is not None else now
+            t0, pcm = self.captures[mic].cut(ev.start - CLIP_BEFORE, min(last + CLIP_AFTER, window_end))
+            if len(pcm) < SAMPLE_RATE:      # under half a second: nothing worth keeping
+                continue
+            path = self._clip_dir / f"{ev.id}.wav"
+            self.clips[ev.id] = {"path": path, "mic": mic, "t0": t0}
+            ev.clip = True
+            drop = []
+            while len(self.clips) > CLIPS_KEPT:
+                old = next(iter(self.clips))
+                drop.append(self.clips.pop(old)["path"])
+                for kept in self.fusion.history:
+                    if kept.id == old:
+                        kept.clip = False
+            self.hass.async_add_executor_job(self._clip_write, path, pcm, drop)
+
+    @staticmethod
+    def _clip_write(path: Path, pcm: bytes, drop: list[Path]) -> None:
+        with wave.open(str(path), "wb") as w:
+            w.setnchannels(1)
+            w.setsampwidth(2)
+            w.setframerate(SAMPLE_RATE)
+            w.writeframes(pcm)
+        for old in drop:
+            old.unlink(missing_ok=True)
+
+    @staticmethod
+    def _clip_read(path: Path) -> bytes:
+        with wave.open(str(path), "rb") as w:
+            return w.readframes(w.getnframes())
 
     # ------------------------------------------------------------ the house
     async def async_set_home(self, lat: float, lon: float) -> None:
@@ -373,6 +442,8 @@ class Hub:
     def _tick(self, _now=None) -> None:
         now = time.time()
         started, ended = self.fusion.tick(now)
+        if self._keep_clips:
+            self._clips_tick(started, ended, now)
         for ev, phase in [*((e, "start") for e in started), *((e, "end") for e in ended)]:
             self.hass.bus.async_fire(EVENT, {"phase": phase, **{k: v for k, v in ev.as_dict().items()
                                                               if k not in ("levels", "extra")}})
@@ -439,6 +510,32 @@ def ws_listen(hass: HomeAssistant, connection, msg) -> None:
 
 
 @websocket_api.websocket_command({
+    vol.Required("type"): f"{DOMAIN}/clip",
+    vol.Required("event"): int,
+})
+@websocket_api.async_response
+async def ws_clip(hass: HomeAssistant, connection, msg) -> None:
+    """The recording kept for one sound: 16-bit mono PCM, base64, as the microphone delivered it."""
+    hub: Hub | None = hass.data.get(DOMAIN)
+    clip = hub.clips.get(msg["event"]) if hub else None
+    if clip is None:
+        connection.send_error(msg["id"], "not_found", "No recording is kept for that sound")
+        return
+    pcm = None
+    for attempt in range(3):            # it may still be on its way to the disk
+        try:
+            pcm = await hass.async_add_executor_job(hub._clip_read, clip["path"])
+            break
+        except (OSError, EOFError, wave.Error):
+            await asyncio.sleep(0.4)
+    if pcm is None:
+        connection.send_error(msg["id"], "not_found", "The recording is no longer there")
+        return
+    connection.send_result(msg["id"], {"rate": SAMPLE_RATE, "t0": clip["t0"], "mic": clip["mic"],
+                                       "data": base64.b64encode(pcm).decode()})
+
+
+@websocket_api.websocket_command({
     vol.Required("type"): f"{DOMAIN}/set_home",
     vol.Required("lat"): vol.All(vol.Coerce(float), vol.Range(min=-90, max=90)),
     vol.Required("lon"): vol.All(vol.Coerce(float), vol.Range(min=-180, max=180)),
@@ -463,6 +560,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         websocket_api.async_register_command(hass, ws_subscribe)
         websocket_api.async_register_command(hass, ws_listen)
         websocket_api.async_register_command(hass, ws_set_home)
+        websocket_api.async_register_command(hass, ws_clip)
     hub = Hub(hass, entry)
     await hub.async_start()
     hass.data[DOMAIN] = hub
