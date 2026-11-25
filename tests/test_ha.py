@@ -3,6 +3,7 @@ two sound files standing in for cameras, entities, bus event and websocket feed.
 Needs: pip install pytest-homeassistant-custom-component, and ffmpeg on the PATH.
 """
 import asyncio
+from unittest.mock import patch
 import base64
 import pathlib
 import sys
@@ -143,14 +144,50 @@ async def test_flow_capture_and_feed(hass, hass_ws_client, tmp_path, socket_enab
                 break
     assert not msg["success"] and msg["error"]["code"] == "not_found"
 
+    # words on request: nothing to do it with at first, then an engine, and the answer is remembered
+    async def ask(n):
+        await ws.send_json({"id": n, "type": "soundscape/transcribe", "event": clip_of})
+        async with asyncio.timeout(10):
+            while True:
+                m = await ws.receive_json()
+                if m["id"] == n:
+                    return m
+    msg = await ask(20)
+    assert not msg["success"] and msg["error"]["code"] == "no_engine"
+
+    from homeassistant.components import stt
+    heard = {}
+
+    class Engine:
+        name = "Test engine"
+        supported_languages = ["en-US", "de-DE"]
+
+        async def async_process_audio_stream(self, meta, stream):
+            heard["meta"] = meta
+            heard["bytes"] = sum([len(c) async for c in stream])
+            heard["calls"] = heard.get("calls", 0) + 1
+            return stt.SpeechResult("  who let the dog out ", stt.SpeechResultState.SUCCESS)
+
+    hass.config.components.add("stt")
+    with patch.object(stt, "async_default_engine", return_value="stt.test"), \
+            patch.object(stt, "async_get_speech_to_text_engine", return_value=Engine()):
+        msg = await ask(21)
+        assert msg["success"] and msg["result"] == {"text": "who let the dog out", "engine": "Test engine"}, msg
+        assert heard["meta"].language == "en-US" and heard["meta"].sample_rate == 16000
+        assert abs(heard["bytes"] / 2 / 16000 - seconds) < 0.1          # the whole recording, at 16 kHz
+        assert (await ask(22))["result"]["text"] == "who let the dog out" and heard["calls"] == 1
+    hass.config.components.remove("stt")
+    kept = next(e for e in hass.data["soundscape"].fusion.history if e.id == clip_of)
+    assert kept.extra["transcript"] == "who let the dog out"
+
     # the house can be moved from the card's map; it is kept and told to every open card
     hub = hass.data["soundscape"]
-    await ws.send_json({"id": 11, "type": "soundscape/set_home", "lat": 32.7301, "lon": -117.1502})
+    await ws.send_json({"id": 31, "type": "soundscape/set_home", "lat": 32.7301, "lon": -117.1502})
     seen = {}
     async with asyncio.timeout(5):
         while len(seen) < 2:
             msg = await ws.receive_json()
-            if msg["id"] == 11:
+            if msg["id"] == 31:
                 seen["result"] = msg["success"]
             elif msg.get("event", {}).get("type") == "meta":
                 seen["meta"] = msg["event"]["meta"]

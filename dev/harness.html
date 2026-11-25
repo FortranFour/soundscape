@@ -61,6 +61,11 @@
       const ev = [...init.active, ...init.recent].find((e) => e.id === msg.event);
       return { rate, t0: ev.start - 8, mic: 'Front', data: btoa(bin) };
     }
+    if (msg.type === 'soundscape/transcribe') {
+      await new Promise((r) => setTimeout(r, 300));
+      if (q.get('stt') === '0') { const e = new Error('No speech-to-text engine is set up in Home Assistant'); e.code = 'no_engine'; throw e; }
+      return { text: 'Is this the right house? I think the package goes around the side.', engine: 'faster-whisper' };
+    }
     if (msg.type === 'map_tiles/access_token') { if (q.get('proxy') === '0') throw new Error('unknown command'); return { token: 'tok123' }; }
     return null;
   }, connection: { subscribeMessage: async (cb, msg) => {

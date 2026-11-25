@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.6.0
+
+- Transcription. Select a voice in the list and press Transcribe beside Play: the recording goes to one of Home Assistant's speech-to-text engines (Whisper, Home Assistant Cloud, or any other you have) and the words appear under the buttons. Nothing is transcribed until you ask, and the words are kept with the sound until Home Assistant restarts.
+- A setting on the Microphones page chooses the engine; left empty, the first one Home Assistant has is used.
+
 ## 0.5.3
 
 - With camera sightings switched on, a vehicle seen on one camera could be pinned on a noise at any microphone, including one nowhere near it. The noise now has to be at the microphone of the camera that sees the vehicle.

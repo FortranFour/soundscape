@@ -130,3 +130,23 @@ def test_passby_ignores_swells_where_the_background_is_restless():
         return x / x.std() * env * 10 ** (-36 / 20)
     feats = run(gusty, sec=110)
     assert peak(feats[35:], "passby") < 0.25
+
+
+def test_recordings_are_readied_for_speech_to_text():
+    """Down to 16 kHz without aliasing, and quiet camera audio brought up."""
+    spec = importlib.util.spec_from_file_location("ha_free_transcribe", pathlib.Path(__file__).parents[1]
+                                                  / "custom_components/soundscape/transcribe.py")
+    try:
+        tr = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(tr)
+    except ImportError:
+        import pytest
+        pytest.skip("needs Home Assistant")
+    t = synth._t(2)
+    quiet = 0.01 * np.sin(2 * np.pi * 440 * t) + 0.01 * np.sin(2 * np.pi * 10500 * t)   # the second would alias to 5.5 kHz
+    out = np.frombuffer(tr.prepare(synth.pcm(quiet), synth.SR), "<i2") / 32768
+    assert abs(len(out) - 2 * 16000) < 3 and 0.3 < np.abs(out).max() <= 1
+    mag = np.abs(np.fft.rfft(out * np.hanning(len(out))))
+    f = np.fft.rfftfreq(len(out), 1 / 16000)
+    assert abs(f[mag.argmax()] - 440) < 2
+    assert mag[(f > 5000) & (f < 6000)].max() < mag.max() * 0.03

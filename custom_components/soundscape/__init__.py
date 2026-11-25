@@ -33,7 +33,7 @@ from homeassistant.util.unit_system import US_CUSTOMARY_SYSTEM
 from .capture import Capture
 from .const import (
     CLIP_AFTER, CLIP_BEFORE, CLIP_MAX, CLIPS_KEPT,
-    CONF_ADSB, CONF_ADSB_RADIUS, CONF_ADSB_URL, CONF_BIRDNET_URL, CONF_CAMERAS, CONF_CLIPS, CONF_DISPATCH, CONF_MIN_CONF, CONF_VIDEO,
+    CONF_ADSB, CONF_ADSB_RADIUS, CONF_ADSB_URL, CONF_BIRDNET_URL, CONF_CAMERAS, CONF_CLIPS, CONF_DISPATCH, CONF_MIN_CONF, CONF_STT, CONF_VIDEO,
     CONF_FRIGATE_URL, CONF_GEOMETRY, CONF_IGNORE, CONF_OVERRIDES, CONF_TEMPLATE, CONF_UNITS,
     DEFAULT_TEMPLATE, DOMAIN, EVENT, SAMPLE_RATE, VERSION,
 )
@@ -41,6 +41,7 @@ from .dispatch import Dispatch, resolve_feed
 from .dsp import DB_MAX, DB_MIN, N_BANDS, Analyzer
 from .fusion import AIR, FRIGATE_AUDIO, FRIGATE_MOVING, Fusion, Mic, fmt_km, prepare_aircraft
 from .providers import birdnet_stream, fetch_aircraft, fetch_types, norm
+from .transcribe import NoEngine, transcribe
 
 _LOGGER = logging.getLogger(__name__)
 PLATFORMS = [Platform.BINARY_SENSOR, Platform.SENSOR]
@@ -538,6 +539,39 @@ async def ws_clip(hass: HomeAssistant, connection, msg) -> None:
 
 
 @websocket_api.websocket_command({
+    vol.Required("type"): f"{DOMAIN}/transcribe",
+    vol.Required("event"): int,
+})
+@websocket_api.async_response
+async def ws_transcribe(hass: HomeAssistant, connection, msg) -> None:
+    """Put the speech in one recording into words. Done only when asked, and remembered with the sound."""
+    hub: Hub | None = hass.data.get(DOMAIN)
+    clip = hub.clips.get(msg["event"]) if hub else None
+    if clip is None:
+        connection.send_error(msg["id"], "not_found", "No recording is kept for that sound")
+        return
+    if "transcript" not in clip:
+        try:
+            pcm = await hass.async_add_executor_job(hub._clip_read, clip["path"])
+            text, engine = await transcribe(hass, hub.opt.get(CONF_STT), pcm, SAMPLE_RATE)
+        except NoEngine:
+            connection.send_error(msg["id"], "no_engine", "No speech-to-text engine is set up in Home Assistant")
+            return
+        except (OSError, EOFError, wave.Error):
+            connection.send_error(msg["id"], "not_found", "The recording is no longer there")
+            return
+        except Exception as err:  # noqa: BLE001  engines fail in their own ways
+            _LOGGER.warning("Transcription failed: %s", err)
+            connection.send_error(msg["id"], "failed", "The speech-to-text engine could not process the recording")
+            return
+        clip["transcript"], clip["engine"] = text, engine
+        for ev in (*hub.fusion.active.values(), *hub.fusion.history):
+            if ev.id == msg["event"]:
+                ev.extra["transcript"], ev.extra["transcribed_by"] = text, engine
+    connection.send_result(msg["id"], {"text": clip["transcript"], "engine": clip["engine"]})
+
+
+@websocket_api.websocket_command({
     vol.Required("type"): f"{DOMAIN}/set_home",
     vol.Required("lat"): vol.All(vol.Coerce(float), vol.Range(min=-90, max=90)),
     vol.Required("lon"): vol.All(vol.Coerce(float), vol.Range(min=-180, max=180)),
@@ -563,6 +597,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         websocket_api.async_register_command(hass, ws_listen)
         websocket_api.async_register_command(hass, ws_set_home)
         websocket_api.async_register_command(hass, ws_clip)
+        websocket_api.async_register_command(hass, ws_transcribe)
     hub = Hub(hass, entry)
     await hub.async_start()
     hass.data[DOMAIN] = hub

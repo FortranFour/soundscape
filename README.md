@@ -31,6 +31,7 @@ The audio analysis has been tested on synthesized sirens, howls, rotors and prop
 
 - Coyotes and sirens overlap in pitch. A howl is reported only with support from Frigate's `howl` label, BirdNET-Go's coyote class, or a dog seen on camera at night.
 - A vehicle is reported from sound alone: steady noise with no pitch that swells over a few seconds and falls away again, louder on one side of the house than the other, heard at two microphones or more, and standing clear of the usual ups and downs at the microphone that hears it best. It is logged as the vehicle leaves, since a noise that only rises may be something switching on. Surf, and rain that comes in waves at a single microphone, can look the same.
+- A voice can be put into words. Select it in the list and press Transcribe; the recording is sent to the speech-to-text engine you already use with Home Assistant's voice assistants, and only when you press the button. With a local engine such as Whisper nothing leaves the house. Recording and transcribing other people's conversations is restricted by law in many places, so know yours.
 - Identification is by sound. What the cameras see is ignored unless "Let camera sightings support a sound" is switched on in the integration's Microphones settings.
 - *Report a sound only when at least this sure*, on the Microphones page of the settings, raises the bar for everything from the default 50 %. Individual kinds can be left out altogether on the same page.
 - Thresholds are in `dsp.py` and `fusion.py` and are deliberately plain numbers.

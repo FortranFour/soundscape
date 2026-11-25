@@ -27,7 +27,7 @@
  *   log_max: 100              # rows kept in the list
  *   log_hide: []              # kinds to leave out, e.g. [vehicle, voice]
  */
-const VERSION = '0.5.3';
+const VERSION = '0.6.0';
 
 const GROUP = {
   bird: 'life', coyote: 'life', dog: 'life', cat: 'life', voice: 'life',
@@ -336,10 +336,12 @@ class SoundscapeCard extends HTMLElement {
           <div class="cbar">
             <button class="cplay" title="Play the recording as the microphone heard it"><ha-icon icon="mdi:play"></ha-icon></button>
             <button class="ciso" title="Show only this sound: its frequency band, with the steady background removed"><ha-icon icon="mdi:filter-variant"></ha-icon><span>Isolate</span></button>
+            <button class="ctext" title="Put the speech in this recording into words" hidden><ha-icon icon="mdi:text-recognition"></ha-icon><span>Transcribe</span></button>
             <ha-icon class="cvolicon" icon="mdi:volume-high"></ha-icon>
             <input class="cvol" type="range" min="0" max="100" step="1" value="${Math.round(this._volume * 100)}" title="Playback volume">
             <span class="cinfo"></span>
           </div>
+          <div class="ctrans" hidden></div>
           <div class="cframe" hidden><canvas class="cspec"></canvas><div class="cmarks"></div><div class="ccursor" hidden></div></div>
         </div>
         ${c.show_radar ? `<div class="radar${map ? ' map' : ''}${fish ? ' fish' : ''}${c.radar === 'hyperbolic' ? ' hyper' : ''}">${fish ? '<canvas class="warp"></canvas><div class="note" hidden></div>' : map ? '<div class="tiles"></div>' : ''}<div class="plot"></div>${map ? `<div class="credit"></div>
@@ -371,6 +373,7 @@ class SoundscapeCard extends HTMLElement {
         if (hit('.mute')) { this._muted = !this._muted; this._listenUi(); return; }
         if (hit('.cplay')) { this._play ? this._clipStop() : this._clipPlay(0); return; }
         if (hit('.ciso')) { this._clipIsolate(!this._iso); return; }
+        if (hit('.ctext')) { this._transcribe(this._clipId); return; }
         const strip = hit('.cframe');
         if (strip && this._clip) { const b = strip.getBoundingClientRect(); this._clipPlay((e.clientX - b.left) / b.width * this._clip.seconds); return; }
         if (Date.now() - (this._dragged || 0) < 250) return;      // the end of a drag is not a click
@@ -1071,6 +1074,17 @@ class SoundscapeCard extends HTMLElement {
         : open.clip ? 'Loading the recording…'
           : open.active ? 'A recording will be ready a few seconds after this ends.' : 'No recording was kept for this sound.';
     root.querySelector('.cframe').hidden = !have;
+    // Words, for voices only, and only when asked for.
+    const said = this._said = this._said || {}, tr = said[open.id] || (open.extra?.transcript != null ? { text: open.extra.transcript, engine: open.extra.transcribed_by } : null);
+    const tb = root.querySelector('.ctext'), tx = root.querySelector('.ctrans');
+    tb.hidden = open.cls !== 'voice' || !!(tr && !tr.error && !tr.busy);
+    tb.disabled = !open.clip || !!tr?.busy;
+    tx.hidden = open.cls !== 'voice' || !tr;
+    if (tr) {
+      tx.classList.toggle('err', !!tr.error);
+      tx.textContent = tr.busy ? 'Transcribing…' : tr.error ? tr.error : tr.text ? `“${tr.text}”` : 'No words could be made out.';
+      tx.title = tr.engine ? `Transcribed by ${tr.engine}` : '';
+    }
     for (const b of root.querySelectorAll('.cplay, .ciso')) b.disabled = !have;
     root.querySelector('.ciso').classList.toggle('on', !!this._iso);
     root.querySelector('.cplay').firstElementChild.setAttribute('icon', this._play ? 'mdi:stop' : 'mdi:play');
@@ -1078,6 +1092,22 @@ class SoundscapeCard extends HTMLElement {
       const c = this._clip, at = (t) => Math.max(0, Math.min(100, (t - c.t0) / c.seconds * 100));
       this._set('.cmarks', `<span style="left:${at(open.start).toFixed(1)}%">reported</span>${open.end ? `<i style="left:${at(open.end).toFixed(1)}%"></i>` : ''}`);
     }
+  }
+
+  async _transcribe(id) {
+    if (id == null) return;
+    const said = this._said = this._said || {};
+    said[id] = { busy: true };
+    this._render();
+    try {
+      const r = await this._hass.callWS({ type: 'soundscape/transcribe', event: id });
+      said[id] = { text: r.text, engine: r.engine };
+    } catch (err) {
+      said[id] = { error: err?.code === 'no_engine'
+        ? 'No speech-to-text engine is set up. Add one under Settings → Voice assistants (Whisper, for example).'
+        : err?.message || 'The recording could not be transcribed.' };
+    }
+    this._render();
   }
 
   async _clipLoad(ev) {
@@ -1314,6 +1344,10 @@ const STYLE = `
   .cbar button.on, .cbar .cplay { background: var(--primary-color); border-color: var(--primary-color); color: var(--text-primary-color, #fff); }
   .cbar button[disabled] { opacity: .4; pointer-events: none; }
   .cinfo { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--secondary-text-color); margin-left: 4px; }
+  .ctrans { margin-top: 6px; padding: 6px 10px; border-radius: 8px; font-size: 13px; line-height: 1.35; color: var(--primary-text-color);
+    background: var(--secondary-background-color, rgba(127,127,127,.12)); }
+  .ctrans.err { color: var(--error-color, #db4437); }
+  .ctrans[hidden], .cbar button[hidden] { display: none; }
   .cframe { position: relative; height: 110px; margin-top: 6px; border-radius: 8px; overflow: hidden; background: #000; cursor: pointer; }
   .cframe[hidden], .ccursor[hidden] { display: none; }
   .cspec { position: absolute; inset: 0; width: 100%; height: 100%; }

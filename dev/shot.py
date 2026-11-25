@@ -125,6 +125,22 @@ try:
         pg.evaluate("card.shadowRoot.querySelector('.cplay').click()"); pg.wait_for_timeout(100)
         print("playing at", round(p1, 2), "s; after a click halfway", round(p2, 2), "s; stopped:", pg.evaluate("card._play === null"), "| errors", errs)
 
+        # ---- a voice: words on request
+        for stt in ("1", "0"):
+            pg = b.new_page(viewport={"width": 520, "height": 620}, device_scale_factor=2)
+            pg.goto("http://127.0.0.1:8765/dev/harness.html?theme=dark&recent=voice&stt=" + stt + "&config=" + quote(json.dumps({"show_radar": False, "show_spectrogram": False, "log_rows": 4})))
+            pg.wait_for_function("window.ready === true", timeout=15000)
+            pg.wait_for_function("card._clip && card._clip.cols > 0", timeout=15000)
+            q = lambda sel, what: pg.evaluate(f"(() => {{ const e = card.shadowRoot.querySelector('{sel}'); return e.{what}; }})()")  # noqa: E731
+            before = (q(".ctext", "hidden"), q(".ctrans", "hidden"))
+            pg.evaluate("card.shadowRoot.querySelector('.ctext').click()"); pg.wait_for_timeout(100)
+            during = q(".ctrans", "textContent")
+            pg.wait_for_timeout(600)
+            print("voice, engine" if stt == "1" else "voice, no engine", "| button hidden, text hidden before:", before, "| during:", during,
+                  "| after:", q(".ctrans", "textContent"), "| button hidden after:", q(".ctext", "hidden"))
+            if stt == "1":
+                pg.screenshot(path="shot-voice.png", full_page=True)
+
         # ---- hyperbolic: drag a place to the middle and it stays under the pointer
         pg = b.new_page(viewport={"width": 520, "height": 760}, device_scale_factor=2)
         errs = []

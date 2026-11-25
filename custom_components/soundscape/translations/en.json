@@ -30,6 +30,7 @@
           "ignore": "Kinds of sound to leave out",
           "clips": "Keep a short recording of each sound",
           "min_confidence": "Report a sound only when at least this sure",
+          "stt_engine": "Speech-to-text engine for transcribing voices",
           "video": "Let camera sightings support a sound"
         },
         "data_description": {
@@ -38,6 +39,7 @@
           "cameras": "Each one costs an ffmpeg process decoding audio only",
           "clips": "Up to 30 seconds from the microphone that heard it best, for the last 100 sounds, so the card can play it back. Kept in temporary storage only: never in a backup, and cleared when Home Assistant restarts.",
           "min_confidence": "50 % reports everything the integration believes more likely than not. Raise it to drop the doubtful ones, at the cost of missing some real ones. Applies to the card and to the sensors.",
+          "stt_engine": "Used when you press Transcribe on a recording of a voice. Leave empty to use the first engine Home Assistant has; with none set up, the button says so. Nothing is transcribed until you ask.",
           "video": "Off by default: every sound is identified from audio alone. On, a vehicle or a dog that Frigate sees on a camera counts as supporting evidence for a sound heard at the same time."
         }
       },
@@ -86,6 +88,7 @@
           "ignore": "Kinds of sound to leave out",
           "clips": "Keep a short recording of each sound",
           "min_confidence": "Report a sound only when at least this sure",
+          "stt_engine": "Speech-to-text engine for transcribing voices",
           "video": "Let camera sightings support a sound"
         },
         "data_description": {
@@ -94,6 +97,7 @@
           "cameras": "Each one costs an ffmpeg process decoding audio only",
           "clips": "Up to 30 seconds from the microphone that heard it best, for the last 100 sounds, so the card can play it back. Kept in temporary storage only: never in a backup, and cleared when Home Assistant restarts.",
           "min_confidence": "50 % reports everything the integration believes more likely than not. Raise it to drop the doubtful ones, at the cost of missing some real ones. Applies to the card and to the sensors.",
+          "stt_engine": "Used when you press Transcribe on a recording of a voice. Leave empty to use the first engine Home Assistant has; with none set up, the button says so. Nothing is transcribed until you ask.",
           "video": "Off by default: every sound is identified from audio alone. On, a vehicle or a dog that Frigate sees on a camera counts as supporting evidence for a sound heard at the same time."
         }
       },
