@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.1
+
+- Far fewer false vehicles. A swell now has to stand clear of that microphone's own recent ups and downs, so leaves, water and gusts no longer count where they are the normal background. It must reach at least 6 dB, be heard at a second microphone as well, and is not reported while an aircraft that should be audible is on ADS-B.
+
 ## 0.5.0
 
 - Vehicles are identified from sound alone. A pass-by is steady, pitchless noise that swells and falls away within 2 to 25 seconds; speech and barking come in bursts, sirens and birds have pitch, and machinery or rain starts and stays. It is placed by how far the swell rose at each microphone.

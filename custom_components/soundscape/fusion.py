@@ -430,7 +430,12 @@ class Fusion:
                 swells = [m.feats.pass_db for m in mics.values() if m.feats.passby > 0.2]
                 # the same swell on every microphone is overhead, not in the street
                 local = n < 2 or len(swells) < n or max(swells) - min(swells) >= 4
-                weight = 0.3 if air_now >= 0.4 else 0.8 if local else 0.45
+                # One microphone alone is something at that microphone: wind on it, leaves,
+                # water. A vehicle in the street reaches at least one more.
+                also = n < 2 or sum(m.feats.swell_db >= 3 for m in mics.values()) >= 2
+                flying = air_now >= 0.4 or (now - self.aircraft_at < 90
+                                            and any(a["audible"] >= 0.25 for a in self.aircraft))
+                weight = 0.3 if flying else 0.8 if local and also else 0.45
                 add("vehicle", "vehicle", f.passby * weight,
                     f"Sound: steady noise swelled {f.pass_db:.0f} dB and fell away at {mics[k].name}", k)
             if self.video and air_now < 0.4:

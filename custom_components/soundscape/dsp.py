@@ -49,6 +49,8 @@ PROP_HARMONICS = 6
 PASS_BAND = (400, 3000)     # tyre and engine noise
 TONELESS_DB = 12.0          # median line prominence below this: no pitch at all
 PASS_OVER = 3.0             # dB over the floor that counts as part of a swell
+PASS_PEAK = 6.0             # dB the swell must reach
+PASS_CLEAR = 4.0            # dB it must stand above the microphone's usual ups and downs
 PASS_SECONDS = (2, 25)      # shorter is a knock, longer is weather or an aircraft
 
 
@@ -73,6 +75,7 @@ class Features:
     prop_hz: float = 0.0
     passby: float = 0.0
     pass_db: float = 0.0
+    swell_db: float = 0.0     # highest the middle band has stood over its floor in the last 10 s
     ready: bool = False
 
 
@@ -116,6 +119,7 @@ class Analyzer:
         self._sec_mid: list[float] = []
         self._sec_prom: list[float] = []
         self._swell: deque[tuple[float, float]] = deque(maxlen=PASS_SECONDS[1] + 12)
+        self._restless: deque[float] = deque(maxlen=120)
         self._ticks = 0
         self._frames_total = 0
 
@@ -224,8 +228,10 @@ class Analyzer:
         # pitch: how far the strongest line stands out of each frame's spectrum
         toneless = _clip01((TONELESS_DB + 5 - prom) / 5.0)
         self._swell.append((f.excess["mid"], min(steady, toneless)))
+        self._restless.append(f.excess["mid"])
 
         e = [v[0] for v in self._swell]
+        f.swell_db = float(max(e[-10:]))
         j = len(e) - 1
         while j >= 0 and e[j] <= PASS_OVER:
             j -= 1
@@ -237,7 +243,12 @@ class Analyzer:
         run = e[i:j + 1]
         peak = max(run)
         at = run.index(peak)
-        if i == 0 or not PASS_SECONDS[0] <= len(run) <= PASS_SECONDS[1] or peak < 5:
+        if i == 0 or not PASS_SECONDS[0] <= len(run) <= PASS_SECONDS[1] or peak < PASS_PEAK:
+            return
+        # It has to stand clear of what this microphone has been doing anyway. Where the
+        # background itself comes and goes (leaves, a fountain, gusts) swells are ordinary.
+        before = list(self._restless)[:-(len(e) - i)]
+        if len(before) >= 10 and peak < float(np.percentile(before, 85)) + PASS_CLEAR:
             return
         if e[-1] > peak - 2 or at == len(run) - 1 and j == len(e) - 1:
             return                             # still rising or holding
@@ -247,7 +258,7 @@ class Analyzer:
         if len(run) >= 5:                      # a flat top is something switching on and off
             hump *= _clip01((0.7 - sum(v > peak - 1.5 for v in run) / len(run)) / 0.25)
         quality = float(np.median([v[1] for v in list(self._swell)[i:j + 1]]))
-        f.passby = _clip01((peak - 3.5) / 4) * hump * quality
+        f.passby = _clip01((peak - 4.5) / 4) * hump * quality
         f.pass_db = float(peak)
 
     def _tone(self, f: Features) -> None:

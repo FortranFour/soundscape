@@ -119,3 +119,14 @@ def test_passby_rejects_bursts_pitch_and_noise_that_stays():
                   lambda s: synth.burst(s, 2, 9),              # switched on, then off
                   lambda s: synth.burst(s, 2, 99)):            # switched on and left on
         assert peak(run(sound, sec=20), "passby") < 0.25
+
+
+def test_passby_ignores_swells_where_the_background_is_restless():
+    """Gusts in the leaves all the time: one more swell means nothing."""
+    def gusty(sec):
+        t = synth._t(sec)
+        env = sum(np.exp(-(((t - c) / 1.5) ** 2)) for c in range(4, int(sec), 7))
+        x = np.diff(synth.pink(sec + 0.01, 0, 9))[: len(t)]
+        return x / x.std() * env * 10 ** (-36 / 20)
+    feats = run(gusty, sec=110)
+    assert peak(feats[35:], "passby") < 0.25

@@ -137,8 +137,20 @@ def test_a_passing_car_is_identified_by_sound_alone():
 
 def test_a_quiet_car_is_still_heard():
     quiet = lambda s: synth.passby(s, db=-44)  # noqa: E731
-    ev, _ = scenario(quiet, {"driveway": 0}, sec=12)
+    ev, _ = scenario(quiet, {"driveway": 0, "front": -3}, sec=12)
     assert [e.cls for e in ev] == ["vehicle"]
+
+
+def test_a_swell_at_one_microphone_only_is_not_a_vehicle():
+    """Wind on one microphone, leaves or water beside it: nothing else hears it."""
+    ev, _ = scenario(synth.passby, {"backyard": 0}, sec=12)
+    assert not ev
+
+
+def test_no_vehicles_while_an_aircraft_should_be_audible():
+    planes = fusion.prepare_aircraft([ac("B738", "A3", 1.0, 3000, flight="SWA12")], *HOME, TYPES)
+    ev, _ = scenario(synth.passby, {"driveway": 0, "front": -6}, sec=12, aircraft=planes)
+    assert not [e for e in ev if e.cls == "vehicle"]
 
 
 def test_talking_and_machinery_are_not_vehicles():
