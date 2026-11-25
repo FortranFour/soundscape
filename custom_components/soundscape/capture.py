@@ -52,10 +52,13 @@ class Capture(threading.Thread):
             analyzer = Analyzer(self.sr)
             errors: list[str] = []
             got = 0
+            drain = None
             try:
                 self._proc = proc = subprocess.Popen(
                     self._command(), stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                threading.Thread(target=self._drain, args=(proc, errors), daemon=True).start()
+                drain = threading.Thread(target=self._drain, args=(proc, errors), daemon=True,
+                                         name=f"soundscape-stderr-{self.mic}")
+                drain.start()
                 while not self._halt.is_set():
                     data = proc.stdout.read(want)
                     if not data:
@@ -80,6 +83,17 @@ class Capture(threading.Thread):
                 self.running = False
                 if self._proc and self._proc.poll() is None:
                     self._proc.kill()
+                # Reap ffmpeg and let its error reader finish, so nothing outlives a stop.
+                if self._proc:
+                    try:
+                        self._proc.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        pass
+                if drain is not None:
+                    drain.join(timeout=5)
+                for pipe in (self._proc.stdout, self._proc.stderr) if self._proc else ():
+                    if pipe:
+                        pipe.close()
             if self._halt.is_set():
                 break
             self.error = (errors[-1] if errors else "stream ended")[:300]

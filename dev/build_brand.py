@@ -10,7 +10,8 @@ for name, colour in (("logo", "#243445"), ("logo-dark", "#ffffff")):
     (SRC / f"{name}.svg").write_text(
         f'<svg xmlns="http://www.w3.org/2000/svg" width="640" height="160" viewBox="0 0 640 160">{mark}'
         f'<g fill="{colour}" font-family="Arial, sans-serif"><text x="168" y="96" font-size="48" font-weight="600">Soundscape</text></g></svg>\n')
-TARGETS = {"icon": ("icon", "dark_icon"), "logo": ("logo",), "logo-dark": ("dark_logo",)}
+TARGETS = {"icon": ("icon",),   # no dark_icon: the same picture, and hassfest asks for it to be left out
+           "logo": ("logo",), "logo-dark": ("dark_logo",)}
 with sync_playwright() as p:
     b = p.chromium.launch(executable_path="/usr/bin/google-chrome", args=["--no-sandbox"])
     for src, names in TARGETS.items():

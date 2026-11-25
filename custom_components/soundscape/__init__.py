@@ -200,7 +200,7 @@ class Hub:
             task.cancel()
         for cap in self.captures.values():
             cap.stop()
-        await self.hass.async_add_executor_job(lambda: [c.join(5) for c in self.captures.values()])
+        await self.hass.async_add_executor_job(lambda: [c.join(12) for c in self.captures.values()])
         await self.hass.async_add_executor_job(self._clip_dir_reset, False)
 
     # ------------------------------------------------------------- audio in
