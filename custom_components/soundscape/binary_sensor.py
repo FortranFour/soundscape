@@ -1,5 +1,6 @@
 """One binary sensor per kind of sound, for automations."""
 from homeassistant.components.binary_sensor import BinarySensorEntity
+from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN, SENSOR_CLASSES
 from .entity import SoundscapeEntity
@@ -17,6 +18,7 @@ class Heard(SoundscapeEntity, BinarySensorEntity):
         self._cls = cls
         self._attr_name = CLASSES[cls][0] if cls != "tiltrotor" else "Osprey"
         self._attr_icon = CLASSES[cls][1]
+        self._was: dict = {}
 
     def _events(self):
         match = AIR if self._cls == "aircraft" else (self._cls,)
@@ -24,6 +26,14 @@ class Heard(SoundscapeEntity, BinarySensorEntity):
 
     def _value(self):
         ev = self._events()
+        if ev:
+            # Remembered after the sound has gone, so that what set the sensor off can still be read.
+            e, d = ev[0], ev[0].as_dict()
+            self._was = {
+                "last_heard": dt_util.utc_from_timestamp(e.start).isoformat(timespec="seconds"),
+                "last_seconds": round(e.last - e.start),
+                **{f"last_{k}": d[k] for k in ("label", "detail", "mic", "compass", "conf", "evidence", "levels")},
+            }
         return (bool(ev), ev[0].label if ev else None, ev[0].mic if ev else None)
 
     @property
@@ -34,6 +44,6 @@ class Heard(SoundscapeEntity, BinarySensorEntity):
     def extra_state_attributes(self):
         ev = self._events()
         if not ev:
-            return {}
+            return dict(self._was)
         d = ev[0].as_dict()
         return {k: d[k] for k in ("label", "detail", "mic", "compass", "bearing", "conf", "evidence")}

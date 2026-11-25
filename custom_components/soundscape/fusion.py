@@ -439,15 +439,16 @@ class Fusion:
                 add("vehicle", "vehicle", f.passby * weight,
                     f"Sound: steady noise swelled {f.pass_db:.0f} dB and fell away at {mics[k].name}", k)
             if self.video and air_now < 0.4:
-                # with a camera sighting to go on, a modest rise will do
-                def rise(i):
-                    ex = mics[i].feats.excess
-                    return max(ex["mid"], ex["low"] - 2)
-                k = max(mics, key=rise)
-                m = rise(k)
-                if m > 3 and (n < 2 or spread >= 4 or not everywhere) and mics[k].feats.howl < 0.3:
-                    add("vehicle", "vehicle", _c01((m - 3) / 7) * 0.45,
-                        f"Level: {m:.0f} dB over background at {mics[k].name}", k)
+                # With a camera sighting to go on, a modest rise will do, but it has to be
+                # at the microphone of the camera that sees the vehicle.
+                for k in {e.mic for key, e in self._ext.items() if key[0] == "fo" and e.cls == "vehicle"}:
+                    if k not in mics:
+                        continue
+                    ex = mics[k].feats.excess
+                    m = max(ex["mid"], ex["low"] - 2)
+                    if m > 3 and mics[k].feats.howl < 0.3:
+                        add("vehicle", "vehicle", _c01((m - 3) / 7) * 0.45,
+                            f"Level: {m:.0f} dB over background at {mics[k].name}", k)
 
         # --- everything the other systems reported
         for ev in self._ext.values():

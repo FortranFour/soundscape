@@ -171,6 +171,9 @@ def test_camera_sightings_count_only_when_switched_on():
     assert not ev
     ev, _ = scenario(rise, {"driveway": 0, "front": -6}, sec=9, hooks=hooks, video=True)
     assert [e.cls for e in ev] == ["vehicle"]
+    # a car on the driveway camera says nothing about a noise in the back yard
+    ev, _ = scenario(rise, {"backyard": 0}, sec=9, hooks=hooks, video=True)
+    assert not ev
 
 
 def test_a_howl_alone_is_never_reported_even_at_night():

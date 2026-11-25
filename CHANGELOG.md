@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.5.3
+
+- With camera sightings switched on, a vehicle seen on one camera could be pinned on a noise at any microphone, including one nowhere near it. The noise now has to be at the microphone of the camera that sees the vehicle.
+- Each binary sensor remembers its last detection after it turns off: `last_heard`, `last_seconds`, `last_label`, `last_detail`, `last_mic`, `last_compass`, `last_conf`, `last_evidence` and `last_levels`.
+
 ## 0.5.2
 
 - Volume slider beside Play on a recording. It is the same volume as live listening, so setting one sets the other, and it works while the recording plays.

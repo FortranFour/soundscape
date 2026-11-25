@@ -183,7 +183,7 @@ audio:
 ## For automations
 
 - `sensor.soundscape_now_hearing`, with every current sound in its attributes.
-- A binary sensor each for siren, coyote, dog, bird, vehicle, car alarm, breaking glass, bang, alarm, aircraft (any kind), helicopter and Osprey, with where and why in the attributes.
+- A binary sensor each for siren, coyote, dog, bird, vehicle, car alarm, breaking glass, bang, alarm, aircraft (any kind), helicopter and Osprey, with where and why in the attributes while on, and the same for the last detection (`last_heard`, `last_evidence`, `last_levels` and so on) once off.
 - A `soundscape_event` on the event bus when a sound starts and when it ends.
 
 ## Development

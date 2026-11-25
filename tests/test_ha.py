@@ -122,6 +122,9 @@ async def test_flow_capture_and_feed(hass, hass_ws_client, tmp_path, socket_enab
             ev = msg.get("event") or {}
             if ev.get("type") == "state":
                 clip_of = next((e["id"] for e in ev["recent"] if e["cls"] == "dog" and e["clip"]), None)
+    dog = hass.states.get("binary_sensor.soundscape_dog")     # off again, and it remembers why it was on
+    assert dog.state == "off" and dog.attributes["last_mic"].lower() == "front"
+    assert any("Frigate" in t for t in dog.attributes["last_evidence"]) and dog.attributes["last_heard"]
     await ws.send_json({"id": 8, "type": "soundscape/clip", "event": clip_of})
     async with asyncio.timeout(5):
         while True:
