@@ -27,7 +27,7 @@
  *   log_max: 100              # rows kept in the list
  *   log_hide: []              # kinds to leave out, e.g. [vehicle, voice]
  */
-const VERSION = '0.5.1';
+const VERSION = '0.5.2';
 
 const GROUP = {
   bird: 'life', coyote: 'life', dog: 'life', cat: 'life', voice: 'life',
@@ -336,6 +336,8 @@ class SoundscapeCard extends HTMLElement {
           <div class="cbar">
             <button class="cplay" title="Play the recording as the microphone heard it"><ha-icon icon="mdi:play"></ha-icon></button>
             <button class="ciso" title="Show only this sound: its frequency band, with the steady background removed"><ha-icon icon="mdi:filter-variant"></ha-icon><span>Isolate</span></button>
+            <ha-icon class="cvolicon" icon="mdi:volume-high"></ha-icon>
+            <input class="cvol" type="range" min="0" max="100" step="1" value="${Math.round(this._volume * 100)}" title="Playback volume">
             <span class="cinfo"></span>
           </div>
           <div class="cframe" hidden><canvas class="cspec"></canvas><div class="cmarks"></div><div class="ccursor" hidden></div></div>
@@ -386,7 +388,13 @@ class SoundscapeCard extends HTMLElement {
         if (ev) { this._open = this._open === ev.dataset.ev ? null : ev.dataset.ev; this._render(); }
       });
       root.addEventListener('input', (e) => {
-        if (e.target.classList?.contains('vol')) { this._volume = e.target.value / 100; this._muted = false; this._listenUi(); }
+        const cl = e.target.classList;
+        if (cl?.contains('vol') || cl?.contains('cvol')) {      // one volume for live listening and for recordings
+          this._volume = e.target.value / 100;
+          if (cl.contains('vol')) this._muted = false;
+          for (const el of root.querySelectorAll('.vol, .cvol')) if (el !== e.target) el.value = e.target.value;
+          this._listenUi();
+        }
       });
     }
     this._canvas = root.querySelector('.frame canvas');
@@ -1180,7 +1188,8 @@ class SoundscapeCard extends HTMLElement {
       }
     }
     const gain = ctx.createGain();
-    gain.gain.value = Math.max(0.05, this._volume) ** 2 * 4;
+    gain.gain.value = this._volume ** 2 * 4;
+    this._clipGain = gain;
     node.connect(gain); gain.connect(ctx.destination);
     const offset = Math.max(0, Math.min(c.seconds - 0.05, from || 0));
     const play = this._play = { src, since: ctx.currentTime - offset };
@@ -1252,6 +1261,8 @@ class SoundscapeCard extends HTMLElement {
 
   _listenUi() {
     const root = this.shadowRoot, hear = root?.querySelector('.hear');
+    if (this._clipGain) this._clipGain.gain.value = this._volume ** 2 * 4;
+    root?.querySelector('.cvolicon')?.setAttribute('icon', this._volume ? 'mdi:volume-high' : 'mdi:volume-off');
     if (!hear) return;
     const on = !!this._listening;
     hear.classList.toggle('on', on);
@@ -1302,7 +1313,7 @@ const STYLE = `
     border-radius: 13px; border: 1px solid var(--divider-color); color: var(--primary-text-color); font-size: 12px; --mdc-icon-size: 16px; }
   .cbar button.on, .cbar .cplay { background: var(--primary-color); border-color: var(--primary-color); color: var(--text-primary-color, #fff); }
   .cbar button[disabled] { opacity: .4; pointer-events: none; }
-  .cinfo { flex: 1; font-size: 12px; color: var(--secondary-text-color); margin-left: 4px; }
+  .cinfo { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--secondary-text-color); margin-left: 4px; }
   .cframe { position: relative; height: 110px; margin-top: 6px; border-radius: 8px; overflow: hidden; background: #000; cursor: pointer; }
   .cframe[hidden], .ccursor[hidden] { display: none; }
   .cspec { position: absolute; inset: 0; width: 100%; height: 100%; }
@@ -1384,7 +1395,8 @@ const STYLE = `
     color: var(--secondary-text-color); border: 1px solid var(--divider-color); --mdc-icon-size: 16px; }
   .listen button.on { background: var(--primary-color); border-color: var(--primary-color); color: var(--text-primary-color, #fff); }
   .listen [hidden] { display: none; }
-  .vol { width: 84px; accent-color: var(--primary-color); }
+  .vol, .cvol { width: 84px; accent-color: var(--primary-color); }
+  .cvolicon { --mdc-icon-size: 18px; color: var(--secondary-text-color); margin-left: 4px; }
   .frame { position: relative; border-radius: 8px; overflow: hidden; background: #000; }
   canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
   .hz span { position: absolute; left: 4px; transform: translateY(50%); font-size: 9.5px; color: rgba(255,255,255,.7); text-shadow: 0 0 3px #000; }

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.2
+
+- Volume slider beside Play on a recording. It is the same volume as live listening, so setting one sets the other, and it works while the recording plays.
+
 ## 0.5.1
 
 - Far fewer false vehicles. A swell now has to stand clear of that microphone's own recent ups and downs, so leaves, water and gusts no longer count where they are the normal background. It must reach at least 6 dB, be heard at a second microphone as well, and is not reported while an aircraft that should be audible is on ADS-B.
