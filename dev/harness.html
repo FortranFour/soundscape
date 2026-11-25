@@ -38,6 +38,8 @@
   const q = new URLSearchParams(location.search);
   document.body.className = q.get('theme') || 'light';
   const init = await (await fetch('./fixture.json')).json();
+  init.meta.classes = init.meta.classes || { bird: ['Bird', 'mdi:bird'], coyote: ['Coyote', 'mdi:dog-side'], dog: ['Dog', 'mdi:dog'], vehicle: ['Vehicle', 'mdi:car-side'], siren: ['Siren', 'mdi:alarm-light'], voice: ['Voice', 'mdi:account-voice'], weather: ['Weather', 'mdi:weather-lightning-rainy'], machinery: ['Machinery', 'mdi:saw-blade'], jet: ['Jet', 'mdi:airplane'] };
+  window.answers = [];
   await import('../custom_components/soundscape/www/soundscape-card.js');
   const card = document.createElement('soundscape-card');
   card.setConfig({ title: 'Soundscape', ...JSON.parse(q.get('config') || '{}') });
@@ -60,6 +62,16 @@
       for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
       const ev = [...init.active, ...init.recent].find((e) => e.id === msg.event);
       return { rate, t0: ev.start - 8, mic: 'Front', data: btoa(bin) };
+    }
+    if (msg.type === 'soundscape/feedback') {
+      window.answers.push(msg);
+      const ev = [...init.active, ...init.recent].find((e) => e.id === msg.event);
+      ev.extra = { ...(ev.extra || {}), feedback: msg.verdict ? { verdict: msg.verdict, actual: msg.actual || null } : undefined };
+      const key = (c) => c.cls === ev.cls && c.mic === ev.mic;
+      const n = window.answers.filter((a) => a.verdict === 'wrong' && a.event === ev.id).length ? 1 : 0;
+      init.calibration = n ? [{ cls: ev.cls, mic: ev.mic, right: 0, wrong: 1, factor: 0.85 }] : (init.calibration || []).filter((c) => !key(c));
+      window.feed && window.feed({ ...init, type: 'state' });
+      return { answer: msg.verdict ? { verdict: msg.verdict } : null, factor: n ? 0.85 : 1 };
     }
     if (msg.type === 'soundscape/transcribe') {
       await new Promise((r) => setTimeout(r, 300));

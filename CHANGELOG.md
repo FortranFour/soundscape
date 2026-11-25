@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.7.0
+
+- Feedback that calibrates. Select a sound and answer **Right**, **Wrong**, or **It was…** (what it really was). Each answer counts for that kind of sound at that microphone only: every "wrong" lowers its confidence by 15 %, every "right" raises it by 5 %, within 40 % to 115 % of normal. "It was…" also counts as right for what it really was. Press an answer again to take it back.
+- The selected sound shows how your answers have adjusted that kind of sound at that microphone, with a Reset link for administrators. The adjustments are kept across restarts and listed in the integration's diagnostics.
+- A sound you answer for is saved with your answer in `media/soundscape` (the recording plus a line in `labels.jsonl`), up to 150 recordings, so detection can be tuned against your own yard. Voices are never saved: only the answer.
+- A setting on the Microphones page, "Learn from answers" (on by default), switches this off: the buttons are hidden and every sound is judged as if no answers had been given. Answers already given are kept and count again when it is switched back on.
+- The test that runs Soundscape inside Home Assistant allows more time on a slow machine.
+
 ## 0.6.1
 
 - The line beside a recording's controls (microphone, length, frequency band) wraps after a bullet instead of being cut off.

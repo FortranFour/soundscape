@@ -15,16 +15,21 @@ _spec = importlib.util.spec_from_file_location(
 fusion = importlib.util.module_from_spec(_spec)
 sys.modules["fusion"] = fusion
 _spec.loader.exec_module(fusion)
+_fspec = importlib.util.spec_from_file_location(
+    "feedback", pathlib.Path(__file__).parents[1] / "custom_components/soundscape/feedback.py")
+feedback = importlib.util.module_from_spec(_fspec)
+_fspec.loader.exec_module(feedback)
 
 MICS = [("front", 180), ("driveway", 90), ("backyard", 0), ("bedroom_windows", 270)]
 BED = 14
 HOME = (32.73, -117.15)
 
 
-def scenario(sound, gains, sec=16, hooks=None, night=False, adsb=True, aircraft=None, video=False):
+def scenario(sound, gains, sec=16, hooks=None, night=False, adsb=True, aircraft=None, video=False, calibration=None):
     """Play `sound` at each microphone with a gain in dB. Returns all events seen."""
     fu = fusion.Fusion([fusion.Mic(i, i.replace("_", " ").title(), b, 10) for i, b in MICS],
-                       *HOME, night=lambda: night, adsb=adsb, video=video)
+                       *HOME, night=lambda: night, adsb=adsb, video=video,
+                       calibration=calibration)
     an = {i: dsp.Analyzer(synth.SR) for i, _ in MICS}
     data = {}
     for n, (i, _) in enumerate(MICS):
@@ -205,3 +210,44 @@ def test_minimum_confidence_screens_out_the_doubtful():
     assert not ev
     ev, _ = strict(synth.wail, {"front": 0})          # a clear siren is well above 70 %
     assert [e.cls for e in ev] == ["siren"]
+
+
+def test_answers_count_per_kind_and_microphone_and_can_be_changed():
+    cal = feedback.Calibration()
+    assert cal.factor("vehicle", "backyard") == 1.0
+    for i in range(3):
+        cal.answer(i, "vehicle", "backyard", "wrong")
+    assert round(cal.factor("vehicle", "backyard"), 3) == round(0.85 ** 3, 3)
+    assert cal.factor("vehicle", "front") == 1.0          # another microphone is untouched
+    cal.answer(2, "vehicle", "backyard", "right")         # changed my mind about one
+    assert round(cal.factor("vehicle", "backyard"), 3) == round(0.85 ** 2 * 1.05, 3)
+    cal.answer(2, "vehicle", "backyard", None)            # and withdrew it
+    assert round(cal.factor("vehicle", "backyard"), 3) == round(0.85 ** 2, 3)
+    cal.answer(9, "vehicle", "backyard", "wrong", actual="weather")
+    assert cal.factor("weather", "backyard") == 1.05      # what it really was counts as right
+    for i in range(20):
+        cal.answer(100 + i, "vehicle", "backyard", "wrong")
+    assert cal.factor("vehicle", "backyard") == feedback.LOWEST
+    again = feedback.Calibration(cal.as_dict())           # survives a restart
+    assert again.factor("vehicle", "backyard") == feedback.LOWEST
+    again.reset("vehicle", "backyard")
+    assert again.factor("vehicle", "backyard") == 1.0 and again.factor("weather", "backyard") == 1.05
+    again.reset()
+    assert again.summary() == []
+
+
+def test_wrong_answers_quiet_that_sound_at_that_microphone_only():
+    gains = {"driveway": 0, "front": -6}
+    ev, _ = scenario(synth.passby, gains, sec=12)
+    assert [e.cls for e in ev] == ["vehicle"] and ev[0].mic == "driveway"
+    cal = feedback.Calibration()
+    for i in range(3):
+        cal.answer(i, "vehicle", "driveway", "wrong")
+    ev, _ = scenario(synth.passby, gains, sec=12, calibration=cal)
+    assert not ev
+    ev, _ = scenario(synth.passby, {"front": 0, "driveway": -6}, sec=12, calibration=cal)
+    assert [e.mic for e in ev] == ["front"]               # the street side still reports cars
+    one = feedback.Calibration()
+    one.answer(1, "vehicle", "driveway", "wrong")
+    ev, _ = scenario(synth.passby, gains, sec=12, calibration=one)
+    assert [e.cls for e in ev] == ["vehicle"] and ev[0].extra["calibrated"] == 0.85

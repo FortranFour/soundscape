@@ -256,7 +256,7 @@ class Event:
 class Fusion:
     def __init__(self, mics: list[Mic], lat: float, lon: float, *, ignore=(),
                  adsb: bool = True, night=lambda: False, imperial: bool = False,
-                 min_conf: float = START, video: bool = False) -> None:
+                 min_conf: float = START, video: bool = False, calibration=None) -> None:
         self.mics = {m.id: m for m in mics}
         self.lat, self.lon = lat, lon
         self.ignore = set(ignore)
@@ -264,6 +264,8 @@ class Fusion:
         self.night = night
         self.imperial = imperial
         self.video = video    # whether camera sightings may support a sound
+        # factor(cls, mic) -> what your answers have made of this kind of sound at this microphone
+        self.calibration = calibration
         self.min_conf = max(START, min(0.95, min_conf))   # how sure it must be before a sound is reported
         self.aircraft: list[dict] = []
         self.aircraft_at = 0.0
@@ -465,9 +467,13 @@ class Fusion:
             if c["cls"] in self.ignore:
                 continue
             score = noisy_or(c["scores"].values())
+            ev = self.active.get(key)
+            factor = 1.0
+            if self.calibration is not None:
+                factor = self.calibration.factor(c["cls"], self._likely_mic(c, ev, loud))
+                score = min(0.99, score * factor)
             st = self._cand.setdefault(key, {"n": 0})
             st["n"] = st["n"] + 1 if score >= self.min_conf else 0
-            ev = self.active.get(key)
             external = any(not t.startswith("Sound") for t in c["texts"])
             need = 1 if external and c["cls"] not in AIR else TIMING.get(c["cls"], (1, 5))[0]
             if ev is None and st["n"] >= need:
@@ -477,6 +483,10 @@ class Fusion:
                 started.append(ev)
             if ev and score >= STOP:
                 self._update(ev, c, score, mics, now)
+                if factor != 1.0:
+                    ev.extra["calibrated"] = round(factor, 2)
+                else:
+                    ev.extra.pop("calibrated", None)
         for key in [k for k in self._cand if k not in cands]:
             del self._cand[key]
         for key, ev in list(self.active.items()):
@@ -486,6 +496,18 @@ class Fusion:
                 self.history.appendleft(ev)
                 ended.append(ev)
         return started, ended
+
+    def _likely_mic(self, c: dict, ev: Event | None, loud: dict[str, float]) -> str | None:
+        """Where a candidate is, for calibration: where it was placed, else where it is loudest."""
+        if c["cls"] in AIR:
+            return None     # aircraft count as one, wherever they were heard
+        if ev is not None and (ev.mic or ev.far):
+            return ev.mic
+        pool = [k for k in c["mics"] if k in loud] or list(loud)
+        if pool:
+            return max(pool, key=loud.get)
+        named = [k for k in c["mics"] if k in self.mics]
+        return named[0] if named else None
 
     def _update(self, ev: Event, c: dict, score: float, mics: dict[str, Mic], now: float) -> None:
         ev.last = now

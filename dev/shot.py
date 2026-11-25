@@ -147,6 +147,22 @@ try:
             if stt == "1":
                 pg.screenshot(path="shot-voice.png", full_page=True)
 
+        # ---- feedback on a past sound
+        pg = b.new_page(viewport={"width": 520, "height": 700}, device_scale_factor=2)
+        errs = []
+        pg.on("pageerror", lambda e: errs.append(str(e)))
+        pg.goto("http://127.0.0.1:8765/dev/harness.html?theme=dark&recent=vehicle&config=" + quote(json.dumps({"show_radar": False, "show_spectrogram": False, "log_rows": 4})))
+        pg.wait_for_function("window.ready === true", timeout=15000)
+        pg.evaluate("card.shadowRoot.querySelector('[data-fb=wrong]').click()"); pg.wait_for_timeout(300)
+        note = pg.evaluate("card.shadowRoot.querySelector('.fbnote')?.textContent || ''")
+        on = pg.evaluate("card.shadowRoot.querySelector('[data-fb=wrong]').classList.contains('on')")
+        pg.screenshot(path="shot-feedback.png", full_page=True)
+        pg.select_option("select.fbwas", "weather"); pg.wait_for_timeout(300)
+        sent = pg.evaluate("window.answers")
+        pg.evaluate("card.shadowRoot.querySelector('[data-fb=right]').click()"); pg.wait_for_timeout(300)
+        print("feedback: wrong lit", on, "| note:", note.strip()[:90], "| sent:", [(a["verdict"], a.get("actual")) for a in sent],
+              "| then right:", pg.evaluate("window.answers.at(-1).verdict"), "| errors", errs)
+
         # ---- hyperbolic: drag a place to the middle and it stays under the pointer
         pg = b.new_page(viewport={"width": 520, "height": 760}, device_scale_factor=2)
         errs = []

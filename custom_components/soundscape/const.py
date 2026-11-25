@@ -1,6 +1,6 @@
 """Constants for Soundscape."""
 DOMAIN = "soundscape"
-VERSION = "0.6.1"
+VERSION = "0.7.0"
 EVENT = "soundscape_event"
 
 CONF_FRIGATE_URL = "frigate_url"
@@ -19,6 +19,7 @@ CONF_CLIPS = "clips"
 CONF_MIN_CONF = "min_confidence"
 CONF_VIDEO = "video"
 CONF_STT = "stt_engine"
+CONF_LEARN = "learn"
 
 DEFAULT_TEMPLATE = "rtsp://{host}:8554/{camera}"
 SAMPLE_RATE = 24000
@@ -28,6 +29,7 @@ CLIP_BEFORE = 8.0     # seconds before the sound was reported; detection itself 
 CLIP_AFTER = 2.0
 CLIP_MAX = 30.0
 CLIPS_KEPT = 100
+LABELED_KEPT = 150     # recordings kept with your answers, in the media folder
 
 ADSB_PROVIDERS = {
     "adsb.fi": "https://opendata.adsb.fi/api/v3/lat/{lat}/lon/{lon}/dist/{nm}",

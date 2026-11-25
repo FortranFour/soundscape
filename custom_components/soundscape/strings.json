@@ -31,6 +31,7 @@
           "clips": "Keep a short recording of each sound",
           "min_confidence": "Report a sound only when at least this sure",
           "stt_engine": "Speech-to-text engine for transcribing voices",
+          "learn": "Learn from answers",
           "video": "Let camera sightings support a sound"
         },
         "data_description": {
@@ -40,6 +41,7 @@
           "clips": "Up to 30 seconds from the microphone that heard it best, for the last 100 sounds, so the card can play it back. Kept in temporary storage only: never in a backup, and cleared when Home Assistant restarts.",
           "min_confidence": "50 % reports everything the integration believes more likely than not. Raise it to drop the doubtful ones, at the cost of missing some real ones. Applies to the card and to the sensors.",
           "stt_engine": "Used when you press Transcribe on a recording of a voice. Leave empty to use the first engine Home Assistant has; with none set up, the button says so. Nothing is transcribed until you ask.",
+          "learn": "On by default: Right, Wrong and It was… appear on a selected sound, and each answer tunes that kind of sound at that microphone. Off, the buttons are hidden and every sound is judged as if no answers had been given; answers already given are kept and count again when this is switched back on.",
           "video": "Off by default: every sound is identified from audio alone. On, a vehicle or a dog that Frigate sees on a camera counts as supporting evidence for a sound heard at the same time."
         }
       },
@@ -89,6 +91,7 @@
           "clips": "Keep a short recording of each sound",
           "min_confidence": "Report a sound only when at least this sure",
           "stt_engine": "Speech-to-text engine for transcribing voices",
+          "learn": "Learn from answers",
           "video": "Let camera sightings support a sound"
         },
         "data_description": {
@@ -98,6 +101,7 @@
           "clips": "Up to 30 seconds from the microphone that heard it best, for the last 100 sounds, so the card can play it back. Kept in temporary storage only: never in a backup, and cleared when Home Assistant restarts.",
           "min_confidence": "50 % reports everything the integration believes more likely than not. Raise it to drop the doubtful ones, at the cost of missing some real ones. Applies to the card and to the sensors.",
           "stt_engine": "Used when you press Transcribe on a recording of a voice. Leave empty to use the first engine Home Assistant has; with none set up, the button says so. Nothing is transcribed until you ask.",
+          "learn": "On by default: Right, Wrong and It was… appear on a selected sound, and each answer tunes that kind of sound at that microphone. Off, the buttons are hidden and every sound is judged as if no answers had been given; answers already given are kept and count again when this is switched back on.",
           "video": "Off by default: every sound is identified from audio alone. On, a vehicle or a dog that Frigate sees on a camera counts as supporting evidence for a sound heard at the same time."
         }
       },

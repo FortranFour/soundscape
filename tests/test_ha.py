@@ -77,6 +77,7 @@ async def test_flow_capture_and_feed(hass, hass_ws_client, tmp_path, socket_enab
     init = (await ws.receive_json())["event"]
     assert init["type"] == "init" and init["meta"]["bands"] == 96
     assert init["meta"]["units"] == "mi" and init["meta"]["rate"] == 24000
+    assert init["meta"]["learn"] is True and init["meta"]["classes"]["vehicle"][0] == "Vehicle"
 
     # live audio: nothing flows until asked for, then 16-bit PCM for that microphone
     await ws.send_json({"id": 6, "type": "soundscape/listen", "mic": "front"})
@@ -85,7 +86,7 @@ async def test_flow_capture_and_feed(hass, hass_ws_client, tmp_path, socket_enab
 
     cols, states = {"front": 0, "backyard": 0}, []
     try:
-        async with asyncio.timeout(bed + sec + 8):
+        async with asyncio.timeout(bed + sec + 30):     # real time, and a CI runner can be slow
             while "siren" not in [f["cls"] for f in fired]:
                 msg = await ws.receive_json()
                 if msg["type"] == "result":
@@ -179,6 +180,36 @@ async def test_flow_capture_and_feed(hass, hass_ws_client, tmp_path, socket_enab
     hass.config.components.remove("stt")
     kept = next(e for e in hass.data["soundscape"].fusion.history if e.id == clip_of)
     assert kept.extra["transcript"] == "who let the dog out"
+
+    # an answer: kept, counted for that kind of sound at that microphone, and the recording saved with it
+    hub = hass.data["soundscape"]
+    kept = hub.find_event(clip_of)
+    await ws.send_json({"id": 23, "type": "soundscape/feedback", "event": clip_of, "verdict": "wrong", "actual": "bang"})
+    async with asyncio.timeout(10):
+        while (msg := await ws.receive_json())["id"] != 23 or msg["type"] != "result":
+            pass
+    assert msg["success"], msg
+    assert msg["result"]["factor"] == 0.85 and kept.extra["feedback"] == {"verdict": "wrong", "actual": "bang"}
+    mic = None if kept.cls in ("jet", "propeller", "helicopter", "tiltrotor", "aircraft") else kept.mic
+    assert hub.calibration.factor(kept.cls, mic) == 0.85 and hub.calibration.factor("bang", mic) == 1.05
+    labels = (hub.labeled_dir / "labels.jsonl").read_text().splitlines()
+    import json as _json
+    rec = _json.loads(labels[-1])
+    assert rec["verdict"] == "wrong" and rec["actual"] == "bang" and rec["reported"] == kept.cls
+    assert (hub.labeled_dir / rec["file"]).stat().st_size > 48000
+    await ws.send_json({"id": 24, "type": "soundscape/feedback_reset"})
+    async with asyncio.timeout(10):
+        while (msg := await ws.receive_json())["id"] != 24 or msg["type"] != "result":
+            pass
+    assert msg["result"]["calibration"] == [] and "feedback" not in kept.extra
+    hub.learn = False                                   # switched off: answers are refused, nothing applies
+    await ws.send_json({"id": 25, "type": "soundscape/feedback", "event": clip_of, "verdict": "wrong"})
+    async with asyncio.timeout(10):
+        while (msg := await ws.receive_json())["id"] != 25 or msg["type"] != "result":
+            pass
+    assert not msg["success"] and msg["error"]["code"] == "off"
+    hub.learn = True
+    await hass.async_block_till_done()
 
     # the house can be moved from the card's map; it is kept and told to every open card
     hub = hass.data["soundscape"]

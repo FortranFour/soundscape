@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import json
 import logging
 import re
 import shutil
@@ -32,14 +33,15 @@ from homeassistant.util.unit_system import US_CUSTOMARY_SYSTEM
 
 from .capture import Capture
 from .const import (
-    CLIP_AFTER, CLIP_BEFORE, CLIP_MAX, CLIPS_KEPT,
-    CONF_ADSB, CONF_ADSB_RADIUS, CONF_ADSB_URL, CONF_BIRDNET_URL, CONF_CAMERAS, CONF_CLIPS, CONF_DISPATCH, CONF_MIN_CONF, CONF_STT, CONF_VIDEO,
+    CLIP_AFTER, CLIP_BEFORE, CLIP_MAX, CLIPS_KEPT, LABELED_KEPT,
+    CONF_ADSB, CONF_ADSB_RADIUS, CONF_ADSB_URL, CONF_BIRDNET_URL, CONF_CAMERAS, CONF_CLIPS, CONF_DISPATCH, CONF_LEARN, CONF_MIN_CONF, CONF_STT, CONF_VIDEO,
     CONF_FRIGATE_URL, CONF_GEOMETRY, CONF_IGNORE, CONF_OVERRIDES, CONF_TEMPLATE, CONF_UNITS,
     DEFAULT_TEMPLATE, DOMAIN, EVENT, SAMPLE_RATE, VERSION,
 )
 from .dispatch import Dispatch, resolve_feed
 from .dsp import DB_MAX, DB_MIN, N_BANDS, Analyzer
-from .fusion import AIR, FRIGATE_AUDIO, FRIGATE_MOVING, Fusion, Mic, fmt_km, prepare_aircraft
+from .feedback import Calibration
+from .fusion import AIR, CLASSES, FRIGATE_AUDIO, FRIGATE_MOVING, Fusion, Mic, fmt_km, prepare_aircraft
 from .providers import birdnet_stream, fetch_aircraft, fetch_types, norm
 from .transcribe import NoEngine, transcribe
 
@@ -110,6 +112,12 @@ class Hub:
         # Where the house is. Home Assistant's own location unless corrected from the card's map.
         self.lat, self.lon = hass.config.latitude, hass.config.longitude
         self._home_store = Store(hass, 1, f"{DOMAIN}_home")
+        self._feedback_store = Store(hass, 1, f"{DOMAIN}_feedback")
+        self.calibration = Calibration()
+        self.learn = bool(self.opt.get(CONF_LEARN, True))
+        # Sounds you have answered for are kept with your answer: a set to tune against.
+        media = (getattr(hass.config, "media_dirs", None) or {}).get("local") or hass.config.path("media")
+        self.labeled_dir = Path(media) / DOMAIN
         # Recordings live in the temporary folder: never in a backup, and gone with a restart, like the list itself.
         self.clips: dict[int, dict] = {}
         self._clip_wait: dict[int, object] = {}
@@ -121,6 +129,7 @@ class Hub:
         hass, opt = self.hass, self.opt
         if (home := await self._home_store.async_load()) and "lat" in home:
             self.lat, self.lon = home["lat"], home["lon"]
+        self.calibration = Calibration(await self._feedback_store.async_load())
         overrides = parse_overrides(opt.get(CONF_OVERRIDES, ""))
         frigate_url = (opt.get(CONF_FRIGATE_URL) or "").rstrip("/")
         frigate_host = urlsplit(frigate_url).hostname or ""
@@ -147,13 +156,16 @@ class Hub:
                              ignore=opt.get(CONF_IGNORE) or (), adsb=opt.get(CONF_ADSB, "off") != "off",
                              night=sun, imperial=use_imperial(hass, opt.get(CONF_UNITS)),
                              min_conf=float(opt.get(CONF_MIN_CONF, 50)) / 100,
-                             video=bool(opt.get(CONF_VIDEO, False)))
+                             video=bool(opt.get(CONF_VIDEO, False)),
+                             # switched off, answers are kept but nothing is judged by them
+                             calibration=self.calibration if self.learn else None)
         ref = Analyzer(SAMPLE_RATE)
         self.meta = {"bands": N_BANDS, "edges": [round(float(x), 1) for x in ref.band_edges],
                      "cols_per_s": ref.cols_per_s, "db_min": DB_MIN, "db_max": DB_MAX,
                      "backlog_s": BACKLOG_S, "version": VERSION, "rate": SAMPLE_RATE,
                      "units": "mi" if self.fusion.imperial else "km",
-                     "lat": self.lat, "lon": self.lon}
+                     "lat": self.lat, "lon": self.lon,
+                     "classes": {k: list(v) for k, v in CLASSES.items()}, "learn": self.learn}
         self._backlog_bytes = int(BACKLOG_S * ref.cols_per_s) * N_BANDS
 
         ffmpeg = get_ffmpeg_manager(hass).binary
@@ -268,6 +280,57 @@ class Hub:
     def _clip_read(path: Path) -> bytes:
         with wave.open(str(path), "rb") as w:
             return w.readframes(w.getnframes())
+
+    # ------------------------------------------------------------ feedback
+    def find_event(self, event_id: int):
+        for ev in (*self.fusion.active.values(), *self.fusion.history):
+            if ev.id == event_id:
+                return ev
+        return None
+
+    async def async_feedback(self, ev, verdict: str | None, actual: str | None) -> dict | None:
+        mic = None if ev.cls in AIR else ev.mic
+        answer = self.calibration.answer(ev.id, ev.cls, mic, verdict, actual, ev.label)
+        if answer:
+            ev.extra["feedback"] = {"verdict": verdict, "actual": answer["actual"]}
+        else:
+            ev.extra.pop("feedback", None)
+        self._feedback_store.async_delay_save(self.calibration.as_dict, 5)
+        if answer:
+            clip = self.clips.get(ev.id)
+            record = {"event": ev.id, "start": round(ev.start), "end": round(ev.end or ev.last),
+                      "reported": ev.cls, "label": ev.label, "mic": ev.mic, "conf": round(ev.conf, 2),
+                      "verdict": verdict, "actual": answer["actual"], "evidence": ev.evidence,
+                      "levels": ev.levels, "answered": answer["at"]}
+            # A voice is never kept: only that one was heard, and what you said about it.
+            voice = "voice" in (ev.cls, answer["actual"])
+            src = None if voice or clip is None else clip["path"]
+            if clip is not None:
+                record["clip_start"] = round(clip["t0"], 2)
+            await self.hass.async_add_executor_job(self._keep_labeled, record, src)
+        self._push()
+        return answer
+
+    def _keep_labeled(self, record: dict, src: Path | None) -> None:
+        self.labeled_dir.mkdir(parents=True, exist_ok=True)
+        if src is not None and src.exists():
+            stamp = datetime.fromtimestamp(record["start"]).strftime("%Y%m%d-%H%M%S")
+            name = f"{stamp}-{record['reported']}-{record['mic'] or 'far'}-{record['event']}.wav"
+            dest = self.labeled_dir / name
+            if not dest.exists():
+                shutil.copyfile(src, dest)
+            record["file"] = name
+            kept = sorted(self.labeled_dir.glob("*.wav"))
+            for old in kept[:-LABELED_KEPT]:
+                old.unlink(missing_ok=True)
+        with open(self.labeled_dir / "labels.jsonl", "a", encoding="utf-8") as f:
+            f.write(json.dumps(record) + "\n")
+
+    def _push(self) -> None:
+        if self.subscribers:
+            snap = {"type": "state", **self.snapshot()}
+            for conn, msg_id, _ in list(self.subscribers.values()):
+                conn.send_message(websocket_api.event_message(msg_id, snap))
 
     # ------------------------------------------------------------ the house
     async def async_set_home(self, lat: float, lon: float) -> None:
@@ -466,6 +529,7 @@ class Hub:
             cap = self.captures.get(mic["id"])
             mic["error"] = None if cap is None or cap.running else (cap.error or "connecting")
         snap["status"] = self.status
+        snap["calibration"] = self.calibration.summary() if self.learn else []
         return snap
 
 
@@ -572,6 +636,50 @@ async def ws_transcribe(hass: HomeAssistant, connection, msg) -> None:
 
 
 @websocket_api.websocket_command({
+    vol.Required("type"): f"{DOMAIN}/feedback",
+    vol.Required("event"): int,
+    vol.Required("verdict"): vol.Any(None, "right", "wrong"),
+    vol.Optional("actual"): vol.Any(None, vol.In(list(CLASSES))),
+})
+@websocket_api.async_response
+async def ws_feedback(hass: HomeAssistant, connection, msg) -> None:
+    """Right, wrong, or what it really was. Teaches that microphone about that kind of sound."""
+    hub: Hub | None = hass.data.get(DOMAIN)
+    if hub is not None and not hub.learn:
+        connection.send_error(msg["id"], "off", "Learning from answers is switched off in Soundscape's settings")
+        return
+    ev = hub.find_event(msg["event"]) if hub and hub.fusion else None
+    if ev is None:
+        connection.send_error(msg["id"], "not_found", "That sound is no longer in the list")
+        return
+    answer = await hub.async_feedback(ev, msg["verdict"], msg.get("actual"))
+    mic = None if ev.cls in AIR else ev.mic
+    connection.send_result(msg["id"], {"answer": answer, "factor": round(hub.calibration.factor(ev.cls, mic), 2)})
+
+
+@websocket_api.websocket_command({
+    vol.Required("type"): f"{DOMAIN}/feedback_reset",
+    vol.Optional("cls"): vol.In(list(CLASSES)),
+    vol.Optional("mic"): vol.Any(None, str),
+})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_feedback_reset(hass: HomeAssistant, connection, msg) -> None:
+    """Forget answers: all of them, one kind of sound, or one kind at one microphone."""
+    hub: Hub | None = hass.data.get(DOMAIN)
+    if hub is None or hub.fusion is None:
+        connection.send_error(msg["id"], "not_ready", "Soundscape is not set up")
+        return
+    hub.calibration.reset(msg.get("cls"), msg["mic"] if "mic" in msg else None)
+    for ev in (*hub.fusion.active.values(), *hub.fusion.history):
+        if "feedback" in ev.extra and str(ev.id) not in hub.calibration.answers:
+            ev.extra.pop("feedback")
+    hub._feedback_store.async_delay_save(hub.calibration.as_dict, 1)
+    hub._push()
+    connection.send_result(msg["id"], {"calibration": hub.calibration.summary()})
+
+
+@websocket_api.websocket_command({
     vol.Required("type"): f"{DOMAIN}/set_home",
     vol.Required("lat"): vol.All(vol.Coerce(float), vol.Range(min=-90, max=90)),
     vol.Required("lon"): vol.All(vol.Coerce(float), vol.Range(min=-180, max=180)),
@@ -598,6 +706,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         websocket_api.async_register_command(hass, ws_set_home)
         websocket_api.async_register_command(hass, ws_clip)
         websocket_api.async_register_command(hass, ws_transcribe)
+        websocket_api.async_register_command(hass, ws_feedback)
+        websocket_api.async_register_command(hass, ws_feedback_reset)
     hub = Hub(hass, entry)
     await hub.async_start()
     hass.data[DOMAIN] = hub

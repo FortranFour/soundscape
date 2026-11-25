@@ -27,7 +27,7 @@
  *   log_max: 100              # rows kept in the list
  *   log_hide: []              # kinds to leave out, e.g. [vehicle, voice]
  */
-const VERSION = '0.6.1';
+const VERSION = '0.7.0';
 
 const GROUP = {
   bird: 'life', coyote: 'life', dog: 'life', cat: 'life', voice: 'life',
@@ -331,7 +331,7 @@ class SoundscapeCard extends HTMLElement {
         <div class="head">${c.show_icon && c.icon ? `<ha-icon class="ticon" icon="${esc(c.icon)}"></ha-icon>` : ''}<span class="title"></span><span class="status"></span></div>
         <div class="body">
         <div class="now"></div>
-        <div class="why" hidden></div>
+        <div class="why" hidden><div class="whytext"></div><div class="fbslot"></div></div>
         <div class="clip" hidden>
           <div class="cbar">
             <button class="cplay" title="Play the recording as the microphone heard it"><ha-icon icon="mdi:play"></ha-icon></button>
@@ -374,6 +374,15 @@ class SoundscapeCard extends HTMLElement {
         if (hit('.cplay')) { this._play ? this._clipStop() : this._clipPlay(0); return; }
         if (hit('.ciso')) { this._clipIsolate(!this._iso); return; }
         if (hit('.ctext')) { this._transcribe(this._clipId); return; }
+        const fbb = hit('[data-fb]');
+        if (fbb) { this._answer(fbb.dataset.fb); return; }
+        const fbr = hit('.fbreset');
+        if (fbr) {
+          this._hass.callWS({ type: 'soundscape/feedback_reset', cls: fbr.dataset.cls, mic: fbr.dataset.mic || null })
+            .catch((err) => console.warn('Soundscape: could not reset', err));
+          return;
+        }
+        if (hit('.fbwas')) return;
         const strip = hit('.cframe');
         if (strip && this._clip) { const b = strip.getBoundingClientRect(); this._clipPlay((e.clientX - b.left) / b.width * this._clip.seconds); return; }
         if (Date.now() - (this._dragged || 0) < 250) return;      // the end of a drag is not a click
@@ -389,6 +398,9 @@ class SoundscapeCard extends HTMLElement {
         if (filter) { this._filter = filter.dataset.filter || null; this._render(); return; }
         const ev = hit('[data-ev]');
         if (ev) { this._open = this._open === ev.dataset.ev ? null : ev.dataset.ev; this._render(); }
+      });
+      root.addEventListener('change', (e) => {
+        if (e.target.classList?.contains('fbwas') && e.target.value) this._answer('wrong', e.target.value);
       });
       root.addEventListener('input', (e) => {
         const cl = e.target.classList;
@@ -442,7 +454,10 @@ class SoundscapeCard extends HTMLElement {
     if (open) {
       const disp = (open.extra?.dispatch || []).map((d) => `<li>${esc(d.agency || 'Dispatch')}: ${esc(d.type)}, ${esc(d.address)}${d.cross ? ' at ' + esc(d.cross) : ''}${d.units ? ` (${esc(d.units)})` : ''}, ${clock(Date.parse(d.time) / 1000)}, ${d.exact ? '' : 'about '}${this._dist(d.km)}</li>`);
       const lines = open.evidence.filter((t) => !t.startsWith('Dispatch')).map((t) => `<li>${esc(t)}</li>`);
-      this._set('.why', `<b>${esc(open.label)}</b> · ${Math.round(open.conf * 100)}% · ${clock(open.start)}<ul>${lines.join('')}${disp.join('')}</ul>${this._levels(open)}`);
+      this._set('.whytext', `<b>${esc(open.label)}</b> · ${Math.round(open.conf * 100)}% · ${clock(open.start)}<ul>${lines.join('')}${disp.join('')}</ul>${this._levels(open)}`);
+      // its own element, so a list that is open is not closed by the panel refreshing every second
+      const slot = why.querySelector('.fbslot'), fbHtml = this._feedback(open, st);
+      if (!slot.firstChild || slot.dataset.sig !== fbHtml) { slot.dataset.sig = fbHtml; slot.innerHTML = fbHtml; }
     }
 
     this._clipUi(open);
@@ -450,6 +465,49 @@ class SoundscapeCard extends HTMLElement {
     if (this._c.show_radar) this._set('.plot', this._c.radar === 'map' ? this._mapPlot(st) : this._isFish ? this._fishPlot(st) : this._radar(st));
     if (this._c.show_spectrogram) this._specUi(st);
     if (this._c.show_log) this._log(st);
+  }
+
+  /* Right, wrong, or what it really was: each answer tunes this kind of sound at this microphone. */
+  _feedback(ev, st) {
+    const classes = this._meta?.classes;
+    if (!classes || !classes[ev.cls] || this._meta.learn === false) return '';     // switched off in the integration
+    const fb = this._fbPending?.id === ev.id ? this._fbPending : ev.extra?.feedback || {};
+    const air = ['jet', 'propeller', 'helicopter', 'tiltrotor', 'aircraft'].includes(ev.cls);
+    const mic = air ? null : ev.mic;
+    const micName = mic ? (st.mics.find((m) => m.id === mic)?.name || mic) : null;
+    const opts = Object.entries(classes).filter(([k]) => k !== ev.cls)
+      .map(([k, [label]]) => `<option value="${k}"${fb.actual === k ? ' selected' : ''}>${esc(label)}</option>`).join('');
+    const right = fb.verdict === 'right', wrong = fb.verdict === 'wrong' && !fb.actual;
+    const cal = (st.calibration || []).find((c) => c.cls === ev.cls && (c.mic || null) === mic);
+    const kind = (classes[ev.cls][0] || ev.cls).toLowerCase();
+    const where = micName ? `${kind} at ${esc(micName)}` : (air ? 'aircraft' : kind);
+    let note = '';
+    if (cal) {
+      const n = (k, w) => `${cal[k]} ${w}`;
+      note = `<div class="fbnote">From your answers, ${where} needs ${cal.factor < 1 ? 'more' : 'less'} evidence: confidence is ${Math.round(cal.factor * 100)}% of normal (${n('wrong', 'wrong')}, ${n('right', 'right')}).`
+        + `${this._hass?.user?.is_admin !== false ? ` <a class="fbreset" data-cls="${ev.cls}" data-mic="${mic ?? ''}">Reset</a>` : ''}</div>`;
+    }
+    return `<div class="fb"><span class="fbq">Was this right?</span>
+      <button data-fb="right" class="${right ? 'on' : ''}" title="Yes: this kind of sound at this microphone is reported a little more readily"><ha-icon icon="mdi:check"></ha-icon><span>Right</span></button>
+      <button data-fb="wrong" class="${wrong ? 'on bad' : ''}" title="No: this kind of sound at this microphone needs more evidence from now on"><ha-icon icon="mdi:close"></ha-icon><span>Wrong</span></button>
+      <select class="fbwas${fb.actual ? ' on' : ''}" title="Wrong, and this is what it was"><option value="">It was…</option>${opts}</select>
+      </div>${note}`;
+  }
+
+  async _answer(verdict, actual = null) {
+    const id = Number(this._open);
+    if (!id) return;
+    const cur = [...(this._state?.active || []), ...(this._state?.recent || [])].find((e) => e.id === id)?.extra?.feedback || {};
+    if (cur.verdict === verdict && (cur.actual || null) === actual) verdict = null;     // a second press takes it back
+    this._fbPending = { id, verdict, actual };
+    this._render();
+    try {
+      await this._hass.callWS({ type: 'soundscape/feedback', event: id, verdict, ...(actual ? { actual } : {}) });
+    } catch (err) {
+      console.warn('Soundscape: the answer was not saved', err);
+    }
+    this._fbPending = null;
+    this._render();
   }
 
   _log(st) {
@@ -1340,6 +1398,16 @@ const STYLE = `
   .chip .c { font-size: 11px; color: var(--secondary-text-color); margin-left: 2px; }
   .why { margin-top: 8px; padding: 8px 10px; border-radius: 10px; font-size: 12.5px; color: var(--primary-text-color);
     background: var(--secondary-background-color, rgba(127,127,127,.12)); }
+  .fb { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 8px; }
+  .fbq { color: var(--secondary-text-color); margin-right: 2px; }
+  .fb button, .fb select { all: unset; cursor: pointer; height: 26px; padding: 0 9px; box-sizing: border-box; display: inline-flex; align-items: center; gap: 4px;
+    border-radius: 13px; border: 1px solid var(--divider-color); color: var(--primary-text-color); font-size: 12px; --mdc-icon-size: 16px; }
+  .fb select { padding-right: 22px; background: no-repeat right 8px center / 8px url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%23888'/%3E%3C/svg%3E"); }
+  .fb select option { color: initial; background: initial; }
+  .fb .on { background: var(--success-color, #43a047); border-color: var(--success-color, #43a047); color: #fff; }
+  .fb .on.bad, .fb select.on { background: var(--error-color, #db4437); border-color: var(--error-color, #db4437); color: #fff; }
+  .fbnote { margin-top: 6px; color: var(--secondary-text-color); font-size: 12px; }
+  .fbnote a { color: var(--primary-color); cursor: pointer; text-decoration: underline; }
   .why ul { margin: 4px 0 0; padding-left: 18px; color: var(--secondary-text-color); }
   .lv { display: grid; grid-template-columns: auto 1fr auto; gap: 3px 8px; align-items: center; margin-top: 6px; color: var(--secondary-text-color); }
   .lv i { height: 5px; border-radius: 3px; background: color-mix(in srgb, var(--primary-text-color) 12%, transparent); }
