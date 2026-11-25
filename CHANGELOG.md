@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.1
+
+- The line beside a recording's controls (microphone, length, frequency band) wraps after a bullet instead of being cut off.
+
 ## 0.6.0
 
 - Transcription. Select a voice in the list and press Transcribe beside Play: the recording goes to one of Home Assistant's speech-to-text engines (Whisper, Home Assistant Cloud, or any other you have) and the words appear under the buttons. Nothing is transcribed until you ask, and the words are kept with the sound until Home Assistant restarts.

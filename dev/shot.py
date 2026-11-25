@@ -117,6 +117,12 @@ try:
         pg.evaluate("card.shadowRoot.querySelector('.ciso').click()"); pg.wait_for_timeout(200)
         print("isolated:", info(), "| bright", lit(), "%")
         pg.screenshot(path="shot-clip-isolated.png", full_page=True)
+        for w in (520, 380):
+            pg.set_viewport_size({"width": w, "height": 620}); pg.wait_for_timeout(150)
+            print(f"isolated at {w}px: info lines", pg.evaluate("(() => { const e = card.shadowRoot.querySelector('.cinfo'); return Math.round(e.getBoundingClientRect().height / 16); })()"),
+                  "| cut off:", pg.evaluate("(() => { const e = card.shadowRoot.querySelector('.cinfo'); return e.scrollWidth > e.clientWidth + 1; })()"))
+            pg.screenshot(path=f"shot-clip-isolated-{w}.png", full_page=True)
+        pg.set_viewport_size({"width": 520, "height": 620})
         pg.evaluate("card.shadowRoot.querySelector('.cplay').click()"); pg.wait_for_timeout(700)
         p1 = pg.evaluate("card._clipPos()")
         box = pg.evaluate("(() => { const r = card.shadowRoot.querySelector('.cframe').getBoundingClientRect(); return [r.x, r.y, r.width, r.height]; })()")

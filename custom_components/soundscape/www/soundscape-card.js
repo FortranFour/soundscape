@@ -27,7 +27,7 @@
  *   log_max: 100              # rows kept in the list
  *   log_hide: []              # kinds to leave out, e.g. [vehicle, voice]
  */
-const VERSION = '0.6.0';
+const VERSION = '0.6.1';
 
 const GROUP = {
   bird: 'life', coyote: 'life', dog: 'life', cat: 'life', voice: 'life',
@@ -1069,10 +1069,18 @@ class SoundscapeCard extends HTMLElement {
     if (open.clip && !this._clip && !this._clipBusy && !this._clipFailed) this._clipLoad(open);
     const have = this._clip?.id === open.id;
     const mic = have ? this._state.mics.find((m) => m.id === this._clip.mic)?.name || this._clip.mic : '';
-    root.querySelector('.cinfo').textContent = have ? `${mic} · ${Math.round(this._clip.seconds)} s${this._iso ? ` · ${this._clip.band[0]}–${this._clip.band[1]} Hz, background removed` : ' · as recorded'}`
+    const infoText = have ? `${mic} · ${Math.round(this._clip.seconds)} s${this._iso ? ` · ${this._clip.band[0]}–${this._clip.band[1]} Hz, background removed` : ' · as recorded'}`
       : this._clipFailed ? 'The recording could not be loaded.'
         : open.clip ? 'Loading the recording…'
           : open.active ? 'A recording will be ready a few seconds after this ends.' : 'No recording was kept for this sound.';
+    // Each part stays whole; a long line breaks after a bullet instead of being cut off.
+    const info = root.querySelector('.cinfo'), parts = infoText.split(' · ');
+    info.title = infoText;
+    info.replaceChildren(...parts.flatMap((p, k) => {
+      const span = document.createElement('span');
+      span.textContent = k < parts.length - 1 ? `${p} ·` : p;
+      return k ? [' ', span] : [span];
+    }));
     root.querySelector('.cframe').hidden = !have;
     // Words, for voices only, and only when asked for.
     const said = this._said = this._said || {}, tr = said[open.id] || (open.extra?.transcript != null ? { text: open.extra.transcript, engine: open.extra.transcribed_by } : null);
@@ -1339,11 +1347,12 @@ const STYLE = `
 
   .clip { margin-top: 8px; }
   .cbar { display: flex; align-items: center; gap: 6px; }
+  .cinfo > span { white-space: nowrap; }
   .cbar button { all: unset; cursor: pointer; height: 26px; min-width: 28px; padding: 0 8px; box-sizing: border-box; display: inline-flex; align-items: center; justify-content: center; gap: 4px;
     border-radius: 13px; border: 1px solid var(--divider-color); color: var(--primary-text-color); font-size: 12px; --mdc-icon-size: 16px; }
   .cbar button.on, .cbar .cplay { background: var(--primary-color); border-color: var(--primary-color); color: var(--text-primary-color, #fff); }
   .cbar button[disabled] { opacity: .4; pointer-events: none; }
-  .cinfo { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--secondary-text-color); margin-left: 4px; }
+  .cinfo { flex: 1 1 120px; min-width: 0; line-height: 1.35; font-size: 12px; color: var(--secondary-text-color); margin-left: 4px; }
   .ctrans { margin-top: 6px; padding: 6px 10px; border-radius: 8px; font-size: 13px; line-height: 1.35; color: var(--primary-text-color);
     background: var(--secondary-background-color, rgba(127,127,127,.12)); }
   .ctrans.err { color: var(--error-color, #db4437); }
