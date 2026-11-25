@@ -55,7 +55,7 @@ async def test_flow_capture_and_feed(hass, hass_ws_client, tmp_path, socket_enab
         result["flow_id"], {"adsb_provider": "off", "adsb_radius_km": 9, "dispatch": "off", "units": "auto"})  # 9 miles
     assert result["step_id"] == "cameras", result
     result = await hass.config_entries.flow.async_configure(result["flow_id"], {
-        "cameras": [], "stream_template": "rtsp://{host}:8554/{camera}", "ignore": [], "clips": True,
+        "cameras": [], "stream_template": "rtsp://{host}:8554/{camera}", "ignore": [], "clips": True, "min_confidence": 50,
         "stream_overrides": f"front={tmp_path}/front.wav\nbackyard={tmp_path}/backyard.wav"})
     assert result["step_id"] == "geometry", result
     result = await hass.config_entries.flow.async_configure(result["flow_id"], {

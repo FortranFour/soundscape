@@ -1,6 +1,6 @@
 """Constants for Soundscape."""
 DOMAIN = "soundscape"
-VERSION = "0.4.0"
+VERSION = "0.4.1"
 EVENT = "soundscape_event"
 
 CONF_FRIGATE_URL = "frigate_url"
@@ -16,6 +16,7 @@ CONF_IGNORE = "ignore"
 CONF_GEOMETRY = "geometry"
 CONF_UNITS = "units"
 CONF_CLIPS = "clips"
+CONF_MIN_CONF = "min_confidence"
 
 DEFAULT_TEMPLATE = "rtsp://{host}:8554/{camera}"
 SAMPLE_RATE = 24000

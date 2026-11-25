@@ -11,7 +11,7 @@ from . import fetch_frigate_cameras, parse_overrides, use_imperial
 from .const import (
     ADSB_PROVIDERS, CONF_ADSB, CONF_ADSB_RADIUS, CONF_ADSB_URL, CONF_BIRDNET_URL, CONF_CAMERAS,
     CONF_DISPATCH, CONF_FRIGATE_URL, CONF_GEOMETRY, CONF_IGNORE, CONF_OVERRIDES, CONF_TEMPLATE,
-    CONF_CLIPS, CONF_UNITS, DEFAULT_TEMPLATE, DOMAIN,
+    CONF_CLIPS, CONF_MIN_CONF, CONF_UNITS, DEFAULT_TEMPLATE, DOMAIN,
 )
 from .dispatch import FEEDS
 from .fusion import CLASSES
@@ -65,6 +65,9 @@ def _cameras_schema(d: dict, cameras: dict) -> vol.Schema:
         vol.Optional(CONF_OVERRIDES, description={"suggested_value": d.get(CONF_OVERRIDES, "")}):
             sel.TextSelector(sel.TextSelectorConfig(multiline=True)),
         vol.Required(CONF_CLIPS, default=d.get(CONF_CLIPS, True)): sel.BooleanSelector(),
+        vol.Required(CONF_MIN_CONF, default=d.get(CONF_MIN_CONF, 50)): sel.NumberSelector(
+            sel.NumberSelectorConfig(min=50, max=95, step=5, unit_of_measurement="%",
+                                     mode=sel.NumberSelectorMode.SLIDER)),
         vol.Optional(CONF_IGNORE, default=d.get(CONF_IGNORE, [])): multi(
             [sel.SelectOptionDict(value=k, label=v[0]) for k, v in CLASSES.items()]),
     })

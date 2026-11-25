@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.1
+
+- A howl is no longer reported on sound alone. At night the sound's own score could just reach the reporting threshold, so a faint steady whine was logged as a coyote for twenty minutes. It now always needs support from Frigate or BirdNET-Go, and a tone has to be clearly louder than the microphone's background to count at all, for howls and sirens alike.
+- New setting on the Microphones page: "Report a sound only when at least this sure" (50 to 95 %).
+
 ## 0.4.0
 
 - Recordings: each sound keeps up to 30 seconds from the microphone that heard it best. Select a sound in the list or a chip to see the recording's spectrogram and play it as recorded; click the spectrogram to play from that point.

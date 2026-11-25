@@ -28,13 +28,15 @@
           "stream_template": "Audio address pattern",
           "stream_overrides": "Other microphones, or addresses that differ",
           "ignore": "Kinds of sound to leave out",
-          "clips": "Keep a short recording of each sound"
+          "clips": "Keep a short recording of each sound",
+          "min_confidence": "Report a sound only when at least this sure"
         },
         "data_description": {
           "stream_template": "The words host and camera in curly braces are replaced with Frigate's host and each camera's restream name. Leave as it is unless your restreams are named differently.",
           "stream_overrides": "One per line: name=address. Anything ffmpeg can open.",
           "cameras": "Each one costs an ffmpeg process decoding audio only",
-          "clips": "Up to 30 seconds from the microphone that heard it best, for the last 100 sounds, so the card can play it back. Kept in temporary storage only: never in a backup, and cleared when Home Assistant restarts."
+          "clips": "Up to 30 seconds from the microphone that heard it best, for the last 100 sounds, so the card can play it back. Kept in temporary storage only: never in a backup, and cleared when Home Assistant restarts.",
+          "min_confidence": "50 % reports everything the integration believes more likely than not. Raise it to drop the doubtful ones, at the cost of missing some real ones. Applies to the card and to the sensors."
         }
       },
       "geometry": {
@@ -80,13 +82,15 @@
           "stream_template": "Audio address pattern",
           "stream_overrides": "Other microphones, or addresses that differ",
           "ignore": "Kinds of sound to leave out",
-          "clips": "Keep a short recording of each sound"
+          "clips": "Keep a short recording of each sound",
+          "min_confidence": "Report a sound only when at least this sure"
         },
         "data_description": {
           "stream_template": "The words host and camera in curly braces are replaced with Frigate's host and each camera's restream name. Leave as it is unless your restreams are named differently.",
           "stream_overrides": "One per line: name=address. Anything ffmpeg can open.",
           "cameras": "Each one costs an ffmpeg process decoding audio only",
-          "clips": "Up to 30 seconds from the microphone that heard it best, for the last 100 sounds, so the card can play it back. Kept in temporary storage only: never in a backup, and cleared when Home Assistant restarts."
+          "clips": "Up to 30 seconds from the microphone that heard it best, for the last 100 sounds, so the card can play it back. Kept in temporary storage only: never in a backup, and cleared when Home Assistant restarts.",
+          "min_confidence": "50 % reports everything the integration believes more likely than not. Raise it to drop the doubtful ones, at the cost of missing some real ones. Applies to the card and to the sensors."
         }
       },
       "geometry": {

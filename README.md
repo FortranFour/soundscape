@@ -31,6 +31,7 @@ The audio analysis has been tested on synthesized sirens, howls, rotors and prop
 
 - Coyotes and sirens overlap in pitch. A howl is reported only with support from Frigate's `howl` label, BirdNET-Go's coyote class, or a dog seen on camera at night.
 - A vehicle is reported when a pass-by is heard and Frigate also sees or hears one. Sound alone is not enough.
+- *Report a sound only when at least this sure*, on the Microphones page of the settings, raises the bar for everything from the default 50 %. Individual kinds can be left out altogether on the same page.
 - Thresholds are in `dsp.py` and `fusion.py` and are deliberately plain numbers.
 - Cameras that encode audio as G.711 carry nothing above 4 kHz. AAC at 16 kHz or more is better for everything here, and for BirdNET-Go.
 

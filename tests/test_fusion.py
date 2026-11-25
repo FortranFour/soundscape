@@ -136,3 +136,34 @@ def test_vehicle_needs_sound_and_sight():
     hooks = {3: lambda fu, now: fu.on_frigate_object("driveway", "car", 1, now)}
     ev, _ = scenario(synth.passby, gains, sec=9, hooks=hooks)
     assert [e.cls for e in ev] == ["vehicle"] and ev[0].mic == "driveway"
+
+
+def test_a_howl_alone_is_never_reported_even_at_night():
+    ev, _ = scenario(lambda s: synth.howl(s, db=-15), {"backyard": 0, "bedroom_windows": -10}, night=True, sec=30)
+    assert not [e for e in ev if e.cls == "coyote"]
+
+
+def test_a_faint_wavering_tone_is_ignored_even_with_support():
+    """A whine barely above the background, as from a fan: not a howl whatever else is going on."""
+    hooks = {3: lambda fu, now: fu.on_frigate_object("backyard", "dog", 1, now)}
+    ev, _ = scenario(lambda s: synth.howl(s, db=-58), {"backyard": 0}, night=True, sec=30, hooks=hooks)
+    assert not [e for e in ev if e.cls == "coyote"]
+
+
+def test_minimum_confidence_screens_out_the_doubtful():
+    hooks = {3: lambda fu, now: fu.on_frigate_audio("backyard", "howl", True, now)}   # Frigate alone: 60 %
+    quiet = lambda s: synth.noise(s, -70)  # noqa: E731
+    ev, _ = scenario(quiet, {"backyard": 0}, hooks=hooks)
+    assert [e.cls for e in ev] == ["coyote"] and ev[0].conf < 0.7
+
+    def strict(sound, gains, **kw):
+        real = fusion.Fusion
+        fusion.Fusion = lambda *a, **k: real(*a, **{**k, "min_conf": 0.7})
+        try:
+            return scenario(sound, gains, **kw)
+        finally:
+            fusion.Fusion = real
+    ev, _ = strict(quiet, {"backyard": 0}, hooks=hooks)
+    assert not ev
+    ev, _ = strict(synth.wail, {"front": 0})          # a clear siren is well above 70 %
+    assert [e.cls for e in ev] == ["siren"]

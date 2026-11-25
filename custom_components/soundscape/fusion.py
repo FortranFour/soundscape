@@ -255,13 +255,15 @@ class Event:
 
 class Fusion:
     def __init__(self, mics: list[Mic], lat: float, lon: float, *, ignore=(),
-                 adsb: bool = True, night=lambda: False, imperial: bool = False) -> None:
+                 adsb: bool = True, night=lambda: False, imperial: bool = False,
+                 min_conf: float = START) -> None:
         self.mics = {m.id: m for m in mics}
         self.lat, self.lon = lat, lon
         self.ignore = set(ignore)
         self.adsb = adsb
         self.night = night
         self.imperial = imperial
+        self.min_conf = max(START, min(0.95, min_conf))   # how sure it must be before a sound is reported
         self.aircraft: list[dict] = []
         self.aircraft_at = 0.0
         self._ext: dict[tuple, Evidence] = {}
@@ -353,12 +355,18 @@ class Fusion:
             if mics:
                 k = max(mics, key=lambda i: getattr(mics[i].feats, sig))
                 best[sig] = (k, getattr(mics[k].feats, sig))
+        # A tone only counts if it is clearly louder than that microphone's background: a faint
+        # steady whine from a fan or a transformer wavers too.
+        def above(k):
+            return _c01((max(mics[k].feats.excess["low"], mics[k].feats.excess["mid"]) - 3) / 4)
+
         if best.get("siren", (0, 0))[1] > 0.3:
             k, s = best["siren"]
-            add("siren", "siren", s, f"Sound: swept tone near {round(mics[k].feats.ridge_hz)} Hz")
+            add("siren", "siren", s * above(k), f"Sound: swept tone near {round(mics[k].feats.ridge_hz)} Hz")
         if best.get("howl", (0, 0))[1] > 0.2:
             k, s = best["howl"]
-            add("coyote", "coyote", s * (0.75 if self.night() else 0.55),
+            # Never enough alone (at most 0.45): a howl is reported only when something else agrees.
+            add("coyote", "coyote", s * above(k) * (0.65 if self.night() else 0.5),
                 f"Sound: wavering howl near {round(mics[k].feats.ridge_hz)} Hz")
 
         air: dict[str, tuple[float, str, dict]] = {}
@@ -436,7 +444,7 @@ class Fusion:
                 continue
             score = noisy_or(c["scores"].values())
             st = self._cand.setdefault(key, {"n": 0})
-            st["n"] = st["n"] + 1 if score >= START else 0
+            st["n"] = st["n"] + 1 if score >= self.min_conf else 0
             ev = self.active.get(key)
             external = any(not t.startswith("Sound") for t in c["texts"])
             need = 1 if external and c["cls"] not in AIR else TIMING.get(c["cls"], (1, 5))[0]
