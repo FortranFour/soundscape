@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.5.0
+
+- Vehicles are identified from sound alone. A pass-by is steady, pitchless noise that swells and falls away within 2 to 25 seconds; speech and barking come in bursts, sirens and birds have pitch, and machinery or rain starts and stays. It is placed by how far the swell rose at each microphone.
+- Camera sightings no longer count as evidence for anything. A new setting on the Microphones page, "Let camera sightings support a sound", brings them back; it is off by default. Frigate's sound labels, BirdNET-Go, ADS-B and dispatch feeds are used as before.
+
 ## 0.4.2
 
 - Passing vehicles were almost never reported: beside a Frigate sighting the sound still had to rise about 11 dB in the middle band. A moving car, truck, motorcycle or bus seen by Frigate now needs a rise of about 4 dB at any microphone, and low engine rumble counts as well as tyre noise. Sound alone is still not enough, so wind and voices are not logged as vehicles.

@@ -13,6 +13,8 @@ One Analyzer per microphone. Feed it 16-bit mono PCM; it returns
   rotor      broadband noise beating at a blade-pass rate of 9-32 Hz
              (helicopter, tiltrotor)
   propeller  a stack of harmonics on a 55-150 Hz fundamental
+  passby     steady, toneless noise that swells over a few seconds and
+             falls away again (a vehicle going past)
 
 Everything else (barks, glass, car alarms, bird species) is left to the
 classifiers that are trained for it; see fusion.py.
@@ -44,6 +46,10 @@ ENVELOPE = (150, 1200)
 ROTOR_HZ = (9.0, 32.0)
 PROP_HZ = (55.0, 150.0)
 PROP_HARMONICS = 6
+PASS_BAND = (400, 3000)     # tyre and engine noise
+TONELESS_DB = 12.0          # median line prominence below this: no pitch at all
+PASS_OVER = 3.0             # dB over the floor that counts as part of a swell
+PASS_SECONDS = (2, 25)      # shorter is a knock, longer is weather or an aircraft
 
 
 def _clip01(x: float) -> float:
@@ -65,6 +71,8 @@ class Features:
     ridge_hz: float = 0.0
     rotor_hz: float = 0.0
     prop_hz: float = 0.0
+    passby: float = 0.0
+    pass_db: float = 0.0
     ready: bool = False
 
 
@@ -104,6 +112,10 @@ class Analyzer:
         self._sec_frames = 0
         self._floor: dict[str, deque[float]] = {k: deque(maxlen=120) for k in BANDS}
         self._bg: np.ndarray | None = None
+        self._pass = slice(*np.searchsorted(freqs, PASS_BAND))
+        self._sec_mid: list[float] = []
+        self._sec_prom: list[float] = []
+        self._swell: deque[tuple[float, float]] = deque(maxlen=PASS_SECONDS[1] + 12)
         self._ticks = 0
         self._frames_total = 0
 
@@ -136,10 +148,13 @@ class Analyzer:
         prom = 10 * np.log10(ridge.max(axis=1) / np.median(ridge, axis=1))
         self._r_hz.extend((self._freqs[self._ridge][pk]).tolist())
         self._r_prom.extend(prom.tolist())
+        self._sec_prom.extend(prom.tolist())
         # Median across the band: follows broadband noise, ignores single tones.
         self._envelope.extend(np.sqrt(np.median(power[:, self._env], axis=1)).tolist())
         for k, sl in self._slices.items():
             self._sec_pow[k] += float(power[:, sl].sum())
+        band = power[:, self._pass]
+        self._sec_mid.extend(band.sum(axis=1).tolist())
         self._sec_frames += len(power)
         self._frames_total += len(power)
 
@@ -178,13 +193,62 @@ class Analyzer:
             self._sec_pow[k] = 0.0
         self._sec_sq, self._sec_n, self._sec_frames = 0.0, 0, 0
         f.ready = self._ticks >= 10
+        self._passby(f)
 
         self._tone(f)
         self._propeller(f)
         self._rotor(f)
         if not f.ready:
-            f.siren = f.howl = f.rotor = f.prop = 0.0
+            f.siren = f.howl = f.rotor = f.prop = f.passby = 0.0
         return f
+
+    def _passby(self, f: Features) -> None:
+        """A vehicle going past: noise that swells and falls away.
+
+        Three things set it apart from the other sounds that raise the level. It is
+        steady within each second, where speech and barking come in bursts. It has no
+        pitch, where voices, music, birds and sirens do. And its loudness makes one
+        smooth hump a few seconds long: rain and machinery stay, a knock is over at once.
+        Nothing is reported until the level has started to fall, so a noise that
+        switches on and stays is never mistaken for an approach.
+        """
+        mid = 10 * np.log10(np.asarray(self._sec_mid) + 1e-14)
+        prom = float(np.median(self._sec_prom)) if self._sec_prom else 0.0
+        self._sec_mid, self._sec_prom = [], []
+        if len(mid) < 8:
+            return
+        # bursts: spread of the loudness inside this second, about its own trend
+        x = np.arange(len(mid))
+        lo, hi = np.percentile(mid - np.polyval(np.polyfit(x, mid, 1), x), (10, 90))
+        steady = _clip01((9.0 - (hi - lo)) / 4.0)
+        # pitch: how far the strongest line stands out of each frame's spectrum
+        toneless = _clip01((TONELESS_DB + 5 - prom) / 5.0)
+        self._swell.append((f.excess["mid"], min(steady, toneless)))
+
+        e = [v[0] for v in self._swell]
+        j = len(e) - 1
+        while j >= 0 and e[j] <= PASS_OVER:
+            j -= 1
+        if j < 0 or len(e) - 1 - j > 3:        # nothing recent
+            return
+        i = j
+        while i > 0 and e[i - 1] > PASS_OVER:
+            i -= 1
+        run = e[i:j + 1]
+        peak = max(run)
+        at = run.index(peak)
+        if i == 0 or not PASS_SECONDS[0] <= len(run) <= PASS_SECONDS[1] or peak < 5:
+            return
+        if e[-1] > peak - 2 or at == len(run) - 1 and j == len(e) - 1:
+            return                             # still rising or holding
+        path = [PASS_OVER, *run, PASS_OVER]
+        travelled = sum(abs(b - a) for a, b in zip(path, path[1:]))
+        hump = _clip01((2 * (peak - PASS_OVER) / travelled - 0.5) / 0.3)
+        if len(run) >= 5:                      # a flat top is something switching on and off
+            hump *= _clip01((0.7 - sum(v > peak - 1.5 for v in run) / len(run)) / 0.25)
+        quality = float(np.median([v[1] for v in list(self._swell)[i:j + 1]]))
+        f.passby = _clip01((peak - 3.5) / 4) * hump * quality
+        f.pass_db = float(peak)
 
     def _tone(self, f: Features) -> None:
         """Siren and howl: the loudest tone between 350 and 2500 Hz, tracked."""

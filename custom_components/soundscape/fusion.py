@@ -256,13 +256,14 @@ class Event:
 class Fusion:
     def __init__(self, mics: list[Mic], lat: float, lon: float, *, ignore=(),
                  adsb: bool = True, night=lambda: False, imperial: bool = False,
-                 min_conf: float = START) -> None:
+                 min_conf: float = START, video: bool = False) -> None:
         self.mics = {m.id: m for m in mics}
         self.lat, self.lon = lat, lon
         self.ignore = set(ignore)
         self.adsb = adsb
         self.night = night
         self.imperial = imperial
+        self.video = video    # whether camera sightings may support a sound
         self.min_conf = max(START, min(0.95, min_conf))   # how sure it must be before a sound is reported
         self.aircraft: list[dict] = []
         self.aircraft_at = 0.0
@@ -292,6 +293,8 @@ class Fusion:
 
     def on_frigate_object(self, mic: str, obj: str, moving: int, now: float) -> None:
         key = ("fo", mic, obj)
+        if not self.video:
+            return
         if moving <= 0:
             if key in self._ext:
                 self._ext[key].expires = min(self._ext[key].expires, now + 2)
@@ -418,21 +421,28 @@ class Fusion:
                 if not self.adsb and cls == "jet":
                     add(cls, cls, 0.2, "ADS-B: off, so unconfirmed")
 
-        # --- a vehicle going by: loud at some microphones, not at all of them
+        # --- a vehicle going by: noise that swelled and fell away, louder on one side
         air_now = max((v[0] for v in air.values()), default=0.0)
-        if mics and air_now < 0.4 and best.get("siren", (0, 0))[1] < 0.4:
-            # Tyre and engine noise sits in the middle band, with a low rumble under it.
-            # Sound alone tops out below the start threshold: it takes Frigate seeing or
-            # hearing the vehicle as well, and then a modest rise is enough.
-            def rise(i):
-                ex = mics[i].feats.excess
-                return max(ex["mid"], ex["low"] - 2)
-            k = max(mics, key=rise)
-            m = rise(k)
-            local = n < 2 or spread >= 4 or not everywhere
-            if m > 3 and local and mics[k].feats.howl < 0.3:
-                add("vehicle", "vehicle", _c01((m - 3) / 7) * 0.45,
-                    f"Sound: pass-by, {m:.0f} dB over background at {mics[k].name}", k)
+        if mics and best.get("siren", (0, 0))[1] < 0.4:
+            k = max(mics, key=lambda i: (round(mics[i].feats.passby, 1), mics[i].feats.pass_db))
+            f = mics[k].feats
+            if f.passby > 0.2 and f.howl < 0.3:
+                swells = [m.feats.pass_db for m in mics.values() if m.feats.passby > 0.2]
+                # the same swell on every microphone is overhead, not in the street
+                local = n < 2 or len(swells) < n or max(swells) - min(swells) >= 4
+                weight = 0.3 if air_now >= 0.4 else 0.8 if local else 0.45
+                add("vehicle", "vehicle", f.passby * weight,
+                    f"Sound: steady noise swelled {f.pass_db:.0f} dB and fell away at {mics[k].name}", k)
+            if self.video and air_now < 0.4:
+                # with a camera sighting to go on, a modest rise will do
+                def rise(i):
+                    ex = mics[i].feats.excess
+                    return max(ex["mid"], ex["low"] - 2)
+                k = max(mics, key=rise)
+                m = rise(k)
+                if m > 3 and (n < 2 or spread >= 4 or not everywhere) and mics[k].feats.howl < 0.3:
+                    add("vehicle", "vehicle", _c01((m - 3) / 7) * 0.45,
+                        f"Level: {m:.0f} dB over background at {mics[k].name}", k)
 
         # --- everything the other systems reported
         for ev in self._ext.values():
@@ -491,6 +501,13 @@ class Fusion:
         ex = {k: (m.feats.excess[band] if band else max(m.feats.excess["low"], m.feats.excess["mid"],
                                                         m.feats.excess["high"]))
               for k, m in mics.items()}
+        if ev.cls == "vehicle":
+            # place it by how far the swell rose at each microphone, not by the level now it has gone
+            swell = {k: (m.feats.pass_db if m.feats.passby > 0.2 else 0.0) for k, m in mics.items()}
+            if ev.levels and max(swell.values(), default=0.0) < max(ev.levels.values()):
+                return     # keep the fix from when it was heard best
+            if any(swell.values()):
+                ex, c = swell, {**c, "mics": set()}
         ev.levels = {k: round(v, 1) for k, v in ex.items()}
         if ac:
             ev.method, ev.far = "adsb", True

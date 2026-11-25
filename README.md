@@ -14,7 +14,7 @@ No single source can name all of these, so Soundscape combines five and shows it
 | --- | --- |
 | Its own analysis of each camera's audio | The spectrogram; sirens (a tone sweeping or stepping between about 400 and 1800 Hz); howls; helicopter and tiltrotor blade beat (9 to 32 Hz); propeller harmonics (55 to 150 Hz fundamental); how far each microphone sits above its own background |
 | Frigate audio detection | Any of Frigate's sound labels you have told it to listen for: barks, glass, car alarms, gunshots, speech, and the rest |
-| Frigate object detection | A car, truck or motorcycle moving on a camera; a dog seen at night |
+| Frigate object detection | Not used unless you switch it on: a car, truck or motorcycle moving on a camera; a dog seen at night |
 | [BirdNET-Go](https://github.com/tphakala/birdnet-go) | Bird species per microphone, including what it is hearing right now, and its coyote, dog, siren and engine classes |
 | ADS-B | Aircraft near the house with type, altitude and track. Types are classed as jet, propeller, helicopter or tiltrotor from the ICAO type designator |
 | A public dispatch list (optional, twelve agencies built in) | After a siren, the dispatches of the same few minutes near the house |
@@ -30,7 +30,8 @@ No single source can name all of these, so Soundscape combines five and shows it
 The audio analysis has been tested on synthesized sirens, howls, rotors and propellers, and the whole chain has been run inside a Home Assistant core against sound files. It has not yet been tuned on recordings from real cameras, and several things will need that:
 
 - Coyotes and sirens overlap in pitch. A howl is reported only with support from Frigate's `howl` label, BirdNET-Go's coyote class, or a dog seen on camera at night.
-- A vehicle is reported when a pass-by is heard and Frigate also sees or hears one. Sound alone is not enough.
+- A vehicle is reported from sound alone: steady noise with no pitch that swells over a few seconds and falls away again, louder on one side of the house than the other. It is logged as the vehicle leaves, since a noise that only rises may be something switching on. Surf, and rain that comes in waves at a single microphone, can look the same.
+- Identification is by sound. What the cameras see is ignored unless "Let camera sightings support a sound" is switched on in the integration's Microphones settings.
 - *Report a sound only when at least this sure*, on the Microphones page of the settings, raises the bar for everything from the default 50 %. Individual kinds can be left out altogether on the same page.
 - Thresholds are in `dsp.py` and `fusion.py` and are deliberately plain numbers.
 - Cameras that encode audio as G.711 carry nothing above 4 kHz. AAC at 16 kHz or more is better for everything here, and for BirdNET-Go.

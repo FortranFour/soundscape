@@ -102,5 +102,22 @@ def passby(sec, db=-28, seed=9):
     return x / x.std() * env * 10 ** (db / 20)
 
 
+def speech(sec, db=-28, seed=11):
+    """Talking: a pitched buzz in syllables."""
+    t = _t(sec)
+    rng = np.random.default_rng(seed)
+    f0 = 140 + 30 * np.sin(2 * np.pi * 0.7 * t)
+    ph = 2 * np.pi * np.cumsum(f0) / SR
+    x = sum(np.sin(k * ph) / k for k in range(1, 16))
+    syll = (np.sin(2 * np.pi * 3.3 * t + rng.uniform(0, 6)) > 0.1) * (np.sin(2 * np.pi * 0.4 * t) > -0.6)
+    return x / np.abs(x).max() * syll * 10 ** (db / 20)
+
+
+def burst(sec, start, stop, db=-35, seed=13):
+    """Noise that switches on and off: a compressor, a blower."""
+    t = _t(sec)
+    return noise(sec, db, seed) * ((t >= start) & (t < stop))
+
+
 def pcm(x):
     return (np.clip(x, -1, 1) * 32767).astype("<i2").tobytes()

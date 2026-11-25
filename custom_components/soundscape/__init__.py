@@ -33,7 +33,7 @@ from homeassistant.util.unit_system import US_CUSTOMARY_SYSTEM
 from .capture import Capture
 from .const import (
     CLIP_AFTER, CLIP_BEFORE, CLIP_MAX, CLIPS_KEPT,
-    CONF_ADSB, CONF_ADSB_RADIUS, CONF_ADSB_URL, CONF_BIRDNET_URL, CONF_CAMERAS, CONF_CLIPS, CONF_DISPATCH, CONF_MIN_CONF,
+    CONF_ADSB, CONF_ADSB_RADIUS, CONF_ADSB_URL, CONF_BIRDNET_URL, CONF_CAMERAS, CONF_CLIPS, CONF_DISPATCH, CONF_MIN_CONF, CONF_VIDEO,
     CONF_FRIGATE_URL, CONF_GEOMETRY, CONF_IGNORE, CONF_OVERRIDES, CONF_TEMPLATE, CONF_UNITS,
     DEFAULT_TEMPLATE, DOMAIN, EVENT, SAMPLE_RATE, VERSION,
 )
@@ -145,7 +145,8 @@ class Hub:
         self.fusion = Fusion(mics, self.lat, self.lon,
                              ignore=opt.get(CONF_IGNORE) or (), adsb=opt.get(CONF_ADSB, "off") != "off",
                              night=sun, imperial=use_imperial(hass, opt.get(CONF_UNITS)),
-                             min_conf=float(opt.get(CONF_MIN_CONF, 50)) / 100)
+                             min_conf=float(opt.get(CONF_MIN_CONF, 50)) / 100,
+                             video=bool(opt.get(CONF_VIDEO, False)))
         ref = Analyzer(SAMPLE_RATE)
         self.meta = {"bands": N_BANDS, "edges": [round(float(x), 1) for x in ref.band_edges],
                      "cols_per_s": ref.cols_per_s, "db_min": DB_MIN, "db_max": DB_MAX,

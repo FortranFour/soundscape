@@ -103,3 +103,19 @@ def test_constant_hum_fades():
 def test_passby_raises_mid_band():
     f = run(synth.passby, sec=9)
     assert max(x.excess["mid"] for x in f) > 8
+
+
+def test_passby_is_a_smooth_swell_of_toneless_noise():
+    assert peak(run(synth.passby), "passby") > 0.8
+    assert peak(run(lambda s: synth.passby(s, db=-44)), "passby") > 0.6
+    short = lambda s: np.concatenate((synth.passby(5), np.zeros(synth.SR * (s - 5))))  # noqa: E731
+    assert peak(run(short), "passby") > 0.8
+
+
+def test_passby_rejects_bursts_pitch_and_noise_that_stays():
+    swell = lambda s: np.exp(-(((synth._t(s) - s / 2) / (s / 6)) ** 2))  # noqa: E731
+    for sound in (synth.speech, synth.howl, synth.birds, synth.hum,
+                  lambda s: synth.wail(s) * swell(s),          # a siren going past
+                  lambda s: synth.burst(s, 2, 9),              # switched on, then off
+                  lambda s: synth.burst(s, 2, 99)):            # switched on and left on
+        assert peak(run(sound, sec=20), "passby") < 0.25

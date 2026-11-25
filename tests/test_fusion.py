@@ -21,10 +21,10 @@ BED = 14
 HOME = (32.73, -117.15)
 
 
-def scenario(sound, gains, sec=16, hooks=None, night=False, adsb=True, aircraft=None):
+def scenario(sound, gains, sec=16, hooks=None, night=False, adsb=True, aircraft=None, video=False):
     """Play `sound` at each microphone with a gain in dB. Returns all events seen."""
     fu = fusion.Fusion([fusion.Mic(i, i.replace("_", " ").title(), b, 10) for i, b in MICS],
-                       *HOME, night=lambda: night, adsb=adsb)
+                       *HOME, night=lambda: night, adsb=adsb, video=video)
     an = {i: dsp.Analyzer(synth.SR) for i, _ in MICS}
     data = {}
     for n, (i, _) in enumerate(MICS):
@@ -129,22 +129,35 @@ def test_birdnet_and_frigate_reports():
     assert len(fu.snapshot(500.0)["recent"]) == 5
 
 
-def test_vehicle_needs_sound_and_sight():
-    gains = {"driveway": 0, "front": -6}
-    ev, _ = scenario(synth.passby, gains, sec=9)
-    assert not ev
-    hooks = {3: lambda fu, now: fu.on_frigate_object("driveway", "car", 1, now)}
-    ev, _ = scenario(synth.passby, gains, sec=9, hooks=hooks)
+def test_a_passing_car_is_identified_by_sound_alone():
+    ev, _ = scenario(synth.passby, {"driveway": 0, "front": -6}, sec=12)
     assert [e.cls for e in ev] == ["vehicle"] and ev[0].mic == "driveway"
+    assert all(t.startswith("Sound") for t in ev[0].evidence)
 
 
-def test_a_quiet_car_counts_once_frigate_sees_it():
-    gains = {"driveway": 0, "front": -6}
-    quiet = lambda s: synth.passby(s, db=-46) + synth.noise(s, -62)  # noqa: E731
-    ev, _ = scenario(quiet, gains, sec=9)
-    assert not ev
+def test_a_quiet_car_is_still_heard():
+    quiet = lambda s: synth.passby(s, db=-44)  # noqa: E731
+    ev, _ = scenario(quiet, {"driveway": 0}, sec=12)
+    assert [e.cls for e in ev] == ["vehicle"]
+
+
+def test_talking_and_machinery_are_not_vehicles():
+    for sound in (synth.speech, lambda s: synth.burst(s, 2, 9), lambda s: synth.burst(s, 2, 99)):
+        ev, _ = scenario(sound, {"driveway": 0, "front": -6}, sec=14)
+        assert not [e for e in ev if e.cls == "vehicle"]
+
+
+def test_the_same_swell_on_every_microphone_is_not_in_the_street():
+    ev, _ = scenario(synth.passby, {i: 0 for i, _ in MICS}, sec=12)
+    assert not [e for e in ev if e.cls == "vehicle"]
+
+
+def test_camera_sightings_count_only_when_switched_on():
+    rise = lambda s: synth.burst(s, 2, 99, db=-42)  # noqa: E731   a noise that starts and stays
     hooks = {3: lambda fu, now: fu.on_frigate_object("driveway", "car", 1, now)}
-    ev, _ = scenario(quiet, gains, sec=9, hooks=hooks)
+    ev, _ = scenario(rise, {"driveway": 0, "front": -6}, sec=9, hooks=hooks)
+    assert not ev
+    ev, _ = scenario(rise, {"driveway": 0, "front": -6}, sec=9, hooks=hooks, video=True)
     assert [e.cls for e in ev] == ["vehicle"]
 
 
