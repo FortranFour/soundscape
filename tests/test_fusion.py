@@ -138,6 +138,16 @@ def test_vehicle_needs_sound_and_sight():
     assert [e.cls for e in ev] == ["vehicle"] and ev[0].mic == "driveway"
 
 
+def test_a_quiet_car_counts_once_frigate_sees_it():
+    gains = {"driveway": 0, "front": -6}
+    quiet = lambda s: synth.passby(s, db=-46) + synth.noise(s, -62)  # noqa: E731
+    ev, _ = scenario(quiet, gains, sec=9)
+    assert not ev
+    hooks = {3: lambda fu, now: fu.on_frigate_object("driveway", "car", 1, now)}
+    ev, _ = scenario(quiet, gains, sec=9, hooks=hooks)
+    assert [e.cls for e in ev] == ["vehicle"]
+
+
 def test_a_howl_alone_is_never_reported_even_at_night():
     ev, _ = scenario(lambda s: synth.howl(s, db=-15), {"backyard": 0, "bedroom_windows": -10}, night=True, sec=30)
     assert not [e for e in ev if e.cls == "coyote"]

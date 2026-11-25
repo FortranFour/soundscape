@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.2
+
+- Passing vehicles were almost never reported: beside a Frigate sighting the sound still had to rise about 11 dB in the middle band. A moving car, truck, motorcycle or bus seen by Frigate now needs a rise of about 4 dB at any microphone, and low engine rumble counts as well as tyre noise. Sound alone is still not enough, so wind and voices are not logged as vehicles.
+
 ## 0.4.1
 
 - A howl is no longer reported on sound alone. At night the sound's own score could just reach the reporting threshold, so a faint steady whine was logged as a coyote for twenty minutes. It now always needs support from Frigate or BirdNET-Go, and a tone has to be clearly louder than the microphone's background to count at all, for howls and sirens alike.

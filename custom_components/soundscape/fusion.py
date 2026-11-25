@@ -298,7 +298,7 @@ class Fusion:
             return
         name = self.mics[mic].name if mic in self.mics else mic
         if obj in FRIGATE_MOVING:
-            self._ext[key] = Evidence("vehicle", mic, 0.35, f"Frigate sees a moving {obj} at {name}", now + 60)
+            self._ext[key] = Evidence("vehicle", mic, 0.45, f"Frigate sees a moving {obj} at {name}", now + 60)
         elif obj == "dog" and self.night():
             self._ext[key] = Evidence("coyote", mic, 0.3, f"Frigate sees a dog at {name} at night", now + 60)
 
@@ -421,12 +421,18 @@ class Fusion:
         # --- a vehicle going by: loud at some microphones, not at all of them
         air_now = max((v[0] for v in air.values()), default=0.0)
         if mics and air_now < 0.4 and best.get("siren", (0, 0))[1] < 0.4:
-            k = max(mics, key=lambda i: mics[i].feats.excess["mid"])
-            mid = mics[k].feats.excess["mid"]
+            # Tyre and engine noise sits in the middle band, with a low rumble under it.
+            # Sound alone tops out below the start threshold: it takes Frigate seeing or
+            # hearing the vehicle as well, and then a modest rise is enough.
+            def rise(i):
+                ex = mics[i].feats.excess
+                return max(ex["mid"], ex["low"] - 2)
+            k = max(mics, key=rise)
+            m = rise(k)
             local = n < 2 or spread >= 4 or not everywhere
-            if mid > 6 and local and mics[k].feats.howl < 0.3:
-                add("vehicle", "vehicle", _c01((mid - 6) / 10) * 0.45,
-                    f"Sound: pass-by, {mid:.0f} dB over background at {mics[k].name}", k)
+            if m > 3 and local and mics[k].feats.howl < 0.3:
+                add("vehicle", "vehicle", _c01((m - 3) / 7) * 0.45,
+                    f"Sound: pass-by, {m:.0f} dB over background at {mics[k].name}", k)
 
         # --- everything the other systems reported
         for ev in self._ext.values():
